@@ -20,8 +20,8 @@ const RETRY_MS = 30 * 1000;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
 /** Wrong credentials: retry rarely, Dexcom locks accounts after repeated failures. */
 const AUTH_RETRY_MS = 10 * 60 * 1000;
-/** Age is shown in whole minutes. */
-const TICK_MS = 60 * 1000;
+/** The progress line gains a pixel every 5 seconds. */
+const TICK_MS = 5 * 1000;
 /** Arrow animation: rests for ANIM_REST_STEPS steps, then nudges one pixel for a step. */
 const ANIM_STEP_MS = 400;
 const ANIM_REST_STEPS = 4;
@@ -204,7 +204,7 @@ function main(): void {
   void draw().catch(report);
   void poll();
 
-  // Redraws the age; the rest only changes when a reading comes in.
+  // Advances the progress line; the rest only changes when a reading comes in.
   const ticker = setInterval(() => {
     if (latest) void draw().catch(report);
   }, TICK_MS);

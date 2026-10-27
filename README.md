@@ -3,14 +3,15 @@
 A continuous glucose display for the BUSY Bar, for people with type 1 diabetes and their followers. It runs on the bar itself and reads from Dexcom Share or Nightscout — no phone, computer or server in between.
 
 ```
- 123 ->  +4
-         2m
+ 119 -> +2
+ ############...######------...------------...------------...------------
 ```
 
 - Big glucose value, colored by range (urgent low, low, in range, high, urgent high)
 - Trend arrow (double up, up, 45° up, flat, 45° down, down, double down) that gently nudges one pixel in the direction glucose is moving (can be turned off)
-- Change since the previous reading, and minutes since the reading
-- Greys out once the reading is stale, and shows `---` after an hour without data
+- Change since the previous reading, at the same size as the value (it steps down a font size only if it wouldn't fit)
+- A progress line along the bottom showing time toward the next 5-minute Dexcom reading: five one-minute segments that fill one pixel every 5 seconds, and stay full once the reading is due
+- Greys out once the reading is stale, showing its age in red in place of the change; shows `---` after an hour without data
 - Status LED blinks once for each new urgent low/high reading (can be turned off)
 - mg/dL or mmol/L
 

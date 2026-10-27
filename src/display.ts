@@ -1,4 +1,4 @@
-import { column, generateXpm2, row, type Node } from "@busy-app/busy-lib";
+import { column, generateXpm2, row, textWidth, type DeviceFont, type Node } from "@busy-app/busy-lib";
 import type { Config } from "./config";
 import type { Reading, Trend } from "./reading";
 
@@ -35,19 +35,30 @@ export function rangeColor(range: Range, cfg: Config): string {
   }
 }
 
-/** The glucose screen: big value, trend arrow, then delta over age. */
+/** Dexcom sensors send a reading every 5 minutes; the progress line spans that. */
+const READING_MS = 5 * 60 * 1000;
+
+/** Delta fonts, largest first: the delta matches the value's size when it fits. */
+const DELTA_FONTS: { font: DeviceFont }[] = [{ font: "extra_large" }, { font: "large" }, { font: "normal" }, { font: "small" }];
+
+const GAP = 3;
+
+/** The glucose screen: value, trend arrow and delta, over a line counting down to the next reading. */
 export function readingFrame(latest: Reading, deltaMgdl: number | null, cfg: Config, now: number): Node {
-  const minutes = Math.max(0, Math.floor((now - latest.time) / 60000));
+  const age = Math.max(0, now - latest.time);
+  const minutes = Math.floor(age / 60000);
   if (minutes >= EXPIRED_MINUTES) {
     return row({ width: 72, height: 16, justify: "center", align: "center", gap: 4 }, [
       { type: "text", id: "value", text: "---", font: "extra_large", color: STALE },
-      { type: "text", id: "age", text: ">1h", font: "small", color: WARN },
+      { type: "text", id: "delta", text: ">1h", font: "large", color: WARN },
     ]);
   }
 
   const stale = minutes >= cfg.staleMinutes;
   const color = stale ? STALE : rangeColor(rangeOf(latest.mgdl, cfg), cfg);
-  const children: Node[] = [{ type: "text", id: "value", text: formatValue(latest.mgdl, cfg), font: "extra_large", color }];
+  const value = formatValue(latest.mgdl, cfg);
+  const children: Node[] = [{ type: "text", id: "value", text: value, font: "extra_large", color }];
+  let used = textWidth(value, "extra_large");
 
   const arrow = stale ? null : ARROWS[latest.trend];
   if (arrow) {
@@ -58,16 +69,44 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, cfg: Con
       width: arrow[0].length,
       height: arrow.length,
     });
+    used += GAP + arrow[0].length;
   }
 
-  children.push(
-    column({ gap: 2, align: "end" }, [
-      { type: "text", id: "delta", text: formatDelta(stale ? null : deltaMgdl, cfg), font: "small", color: SUBTLE },
-      { type: "text", id: "age", text: `${minutes}m`, font: "small", color: stale ? WARN : SUBTLE },
-    ]),
-  );
+  // Once stale, the age replaces the delta: the progress line no longer says how old the reading is.
+  const side = stale ? `${minutes}m` : formatDelta(deltaMgdl, cfg);
+  let font = DELTA_FONTS[DELTA_FONTS.length - 1].font;
+  for (const candidate of DELTA_FONTS) {
+    if (used + GAP + textWidth(side, candidate.font) <= 72) {
+      font = candidate.font;
+      break;
+    }
+  }
+  children.push({ type: "text", id: "delta", text: side, font, color: stale ? WARN : SUBTLE });
 
-  return row({ width: 72, height: 16, justify: "center", align: "center", gap: 3 }, children);
+  return column({ width: 72, height: 16, gap: 1 }, [
+    row({ width: 72, height: 14, justify: "center", align: "center", gap: GAP }, children),
+    progressLine(Math.min(1, age / READING_MS)),
+  ]);
+}
+
+/** Five one-minute segments along the bottom row, filling one pixel every 5 seconds. */
+function progressLine(fraction: number): Node {
+  const segment = 12;
+  const filled = Math.round(fraction * segment * 5);
+  let line = "";
+  for (let x = 0; x < 72; x++) {
+    const index = Math.floor(x / (segment + 3));
+    const offset = x % (segment + 3);
+    if (offset >= segment) line += ".";
+    else line += index * segment + offset < filled ? "#" : "-";
+  }
+  return {
+    type: "xpmbitmap",
+    id: "progress",
+    data: generateXpm2({ palette: { "#": "#999999", "-": "#262626", ".": "none" }, grid: [line] }),
+    width: 72,
+    height: 1,
+  };
 }
 
 /** A short status line in place of a reading. */
