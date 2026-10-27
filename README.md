@@ -9,8 +9,9 @@ A continuous glucose display for the BUSY Bar, for people with type 1 diabetes a
 
 - Big glucose value, colored by range (urgent low, low, in range, high, urgent high)
 - Trend arrow (double up, up, 45° up, flat, 45° down, down, double down) that gently nudges one pixel in the direction glucose is moving (can be turned off)
+- Four display modes: number + delta, number only, arrow only, or number + carbs and insulin on board (Nightscout)
 - Change since the previous reading, at the same size as the value (it steps down a font size only if it wouldn't fit)
-- A progress line along the bottom showing time toward the next 5-minute Dexcom reading: five one-minute segments that fill one pixel every 5 seconds, and stay full once the reading is due
+- A progress line along the bottom showing time toward the next 5-minute Dexcom reading: five one-minute segments, inset from the edges, that fill one pixel every 6 seconds and stay full once the reading is due
 - Greys out once the reading is stale, showing its age in red in place of the change; shows `---` after an hour without data
 - Status LED blinks once for each new urgent low/high reading (can be turned off)
 - mg/dL or mmol/L
@@ -19,20 +20,22 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 
 ## Setup
 
-1. Pick a data source:
+1. Set up Dexcom Share, Nightscout, or both:
    - **Dexcom Share:** in the Dexcom app, turn on **Share** and invite at least one follower. Share's servers only serve data for accounts that share.
-   - **Nightscout:** any Nightscout site. If it isn't publicly readable, create an access token with the `readable` role (Admin Tools → Subjects). The API secret is not supported.
-2. Install the app: download the `.tgz` from [Releases](https://github.com/devrsw/busybar-diabetes/releases), or build it (below).
+   - **Nightscout:** any Nightscout site. If it isn't publicly readable, create an access token: Admin Tools → Subjects → Add new subject with the `readable` role, then copy the token shown next to it (it looks like `bar-1a2b3c4d5e6f7a8b`). The API secret is not supported.
+
+   With both, Dexcom supplies glucose and Nightscout takes over whenever Dexcom isn't working: an error, a rejected login, no data, or a reading older than the stale limit. Nightscout also supplies carbs and insulin on board for the COB/IOB display mode.
+2. Install the app: download the `.tgz` from [Releases](https://github.com/devrsw/busybar-diabetes/releases), or build it (below). Safari may unpack the download into a `.tar`; that installs just the same.
 3. On the BUSY Bar, open **APPS → Glucose** settings and fill them in with the bar's own controls. Every setting can be changed on the bar; the bar's Web UI works too.
 
 | Setting | |
 | --- | --- |
-| Data source | **Dexcom Share** or **Nightscout** |
 | Dexcom Share → Username | The Dexcom account of the person wearing the sensor (not a follower's). Username, email, or phone number with `+` and country code. |
 | Dexcom Share → Password | That account's password. Stored on the bar, masked in the UI. |
 | Dexcom Share → Region | **United States**, **Outside US**, or **Japan**: where that Dexcom account was created. |
 | Nightscout → URL | Your site, e.g. `https://my-site.herokuapp.com` (`https://` is added if left out) |
 | Nightscout → Access token | Only if the site needs one, e.g. `readable-1a2b3c4d5e6f7a8b` |
+| Display → Display mode | **Number + delta** (default), **Number only**, **Arrow only** (a larger arrow; shows the number while the reading is stale or has no trend), or **Number + COB/IOB**: carbs on board over insulin on board, from Nightscout (`/api/v2/properties`, so it works with Loop, AAPS, OpenAPS or logged treatments). Needs a Nightscout URL, even when Dexcom supplies glucose; without one it shows the delta instead. Shows `--g` / `--U` if Nightscout can't be read (check the token). |
 | Display → Units | mg/dL or mmol/L |
 | Display → Stale after | Minutes before the reading greys out (default 15) |
 | Display → Animate trend arrow | Nudge the arrow one pixel along its direction every 2 seconds (default on) |
@@ -50,11 +53,10 @@ Settings are re-read every time the app polls, so changes take effect within a f
 
 | Message | Meaning |
 | --- | --- |
-| `Set Dexcom login` | Username or password is empty |
+| `Set Dexcom/NS` | Neither a Dexcom login nor a Nightscout URL is set |
 | `Bad login` | Dexcom rejected the username/password, or the region is wrong. The app waits 10 minutes before trying again, so it doesn't lock the account |
 | `Dexcom locked` | Too many failed logins; Dexcom has locked the account for a while |
 | `No data` | Logged in, but no readings (Dexcom: in the last 24 hours; is Share on?) |
-| `Set NS URL` | Nightscout is selected but the URL is empty |
 | `Set NS token` / `Bad NS token` | The Nightscout site refused the request: it needs a token, or the token is wrong |
 | `Bad NS URL` | Nothing that looks like Nightscout at that URL |
 | `No connection` | The source couldn't be reached; retries with backoff from 30 s up to 5 min |
@@ -63,7 +65,7 @@ Settings are re-read every time the app polls, so changes take effect within a f
 
 Dexcom sensors produce a reading every 5 minutes. The app asks Share for the two newest readings, then sleeps until 20 seconds after the next one is due. If it hasn't arrived yet it asks again every 30 seconds. That's about one request every 5 minutes in normal use.
 
-Nightscout is checked every minute instead, since it has no login to lock and may carry 1-minute data from other sensors.
+While Nightscout is supplying glucose it is checked every minute, since it has no login to lock and may carry 1-minute data from other sensors. After Dexcom rejects a login, the app leaves Dexcom alone for 10 minutes (so the account doesn't get locked) and uses Nightscout meanwhile.
 
 The arrow animation is two small redraws of the arrow every 2 seconds, on the bar itself. It stops whenever no arrow is shown (stale or missing data).
 

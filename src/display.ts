@@ -43,8 +43,14 @@ const DELTA_FONTS: { font: DeviceFont }[] = [{ font: "extra_large" }, { font: "l
 
 const GAP = 3;
 
-/** The glucose screen: value, trend arrow and delta, over a line counting down to the next reading. */
-export function readingFrame(latest: Reading, deltaMgdl: number | null, cfg: Config, now: number): Node {
+/** Insulin and carbs on board from Nightscout; null when unknown. */
+export interface Extras {
+  iob: number | null;
+  cob: number | null;
+}
+
+/** The glucose screen in the configured display mode, over a line counting down to the next reading. */
+export function readingFrame(latest: Reading, deltaMgdl: number | null, extras: Extras | null, cfg: Config, now: number): Node {
   const age = Math.max(0, now - latest.time);
   const minutes = Math.floor(age / 60000);
   if (minutes >= EXPIRED_MINUTES) {
@@ -57,31 +63,50 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, cfg: Con
   const stale = minutes >= cfg.staleMinutes;
   const color = stale ? STALE : rangeColor(rangeOf(latest.mgdl, cfg), cfg);
   const value = formatValue(latest.mgdl, cfg);
-  const children: Node[] = [{ type: "text", id: "value", text: value, font: "extra_large", color }];
-  let used = textWidth(value, "extra_large");
+  const valueNode: Node = { type: "text", id: "value", text: value, font: "extra_large", color };
+  const small = stale ? null : ARROWS[latest.trend];
 
-  const arrow = stale ? null : ARROWS[latest.trend];
-  if (arrow) {
-    children.push({
-      type: "xpmbitmap",
-      id: "arrow",
-      data: generateXpm2({ palette: { "#": color, ".": "none" }, grid: arrow }),
-      width: arrow[0].length,
-      height: arrow.length,
-    });
-    used += GAP + arrow[0].length;
-  }
+  let mode = cfg.displayMode;
+  // IOB/COB only come from Nightscout; a missing arrow leaves the arrow mode nothing to show.
+  if (mode === "iob_cob" && !cfg.nsUrl) mode = "delta";
+  const big = stale ? null : BIG_ARROWS[latest.trend];
+  if (mode === "arrow" && !big) mode = "number";
 
-  // Once stale, the age replaces the delta: the progress line no longer says how old the reading is.
-  const side = stale ? `${minutes}m` : formatDelta(deltaMgdl, cfg);
-  let font = DELTA_FONTS[DELTA_FONTS.length - 1].font;
-  for (const candidate of DELTA_FONTS) {
-    if (used + GAP + textWidth(side, candidate.font) <= 72) {
-      font = candidate.font;
-      break;
+  const children: Node[] = [];
+  if (mode === "arrow") {
+    children.push(arrowNode(big!, color));
+  } else if (mode === "number") {
+    children.push(valueNode);
+  } else if (mode === "iob_cob") {
+    children.push(valueNode);
+    const lines = column({ gap: 2, align: "end" }, [
+      { type: "text", id: "cob", text: formatCob(extras?.cob ?? null), font: "small", color: SUBTLE },
+      { type: "text", id: "iob", text: formatIob(extras?.iob ?? null), font: "small", color: SUBTLE },
+    ]);
+    const linesWidth = Math.max(textWidth(formatCob(extras?.cob ?? null), "small"), textWidth(formatIob(extras?.iob ?? null), "small"));
+    // The arrow goes first when space runs short.
+    if (small && textWidth(value, "extra_large") + small[0].length + linesWidth + 2 * GAP <= 72) {
+      children.push(arrowNode(small, color));
     }
+    children.push(lines);
+  } else {
+    children.push(valueNode);
+    let used = textWidth(value, "extra_large");
+    if (small) {
+      children.push(arrowNode(small, color));
+      used += GAP + small[0].length;
+    }
+    // Once stale, the age replaces the delta: the progress line no longer says how old the reading is.
+    const side = stale ? `${minutes}m` : formatDelta(deltaMgdl, cfg);
+    let font = DELTA_FONTS[DELTA_FONTS.length - 1].font;
+    for (const candidate of DELTA_FONTS) {
+      if (used + GAP + textWidth(side, candidate.font) <= 72) {
+        font = candidate.font;
+        break;
+      }
+    }
+    children.push({ type: "text", id: "delta", text: side, font, color: stale ? WARN : SUBTLE });
   }
-  children.push({ type: "text", id: "delta", text: side, font, color: stale ? WARN : SUBTLE });
 
   return column({ width: 72, height: 16, gap: 1 }, [
     row({ width: 72, height: 14, justify: "center", align: "center", gap: GAP }, children),
@@ -89,16 +114,28 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, cfg: Con
   ]);
 }
 
-/** Five one-minute segments along the bottom row, filling one pixel every 5 seconds. */
+function arrowNode(grid: string[], color: string): Node {
+  return {
+    type: "xpmbitmap",
+    id: "arrow",
+    data: generateXpm2({ palette: { "#": color, ".": "none" }, grid }),
+    width: grid[0].length,
+    height: grid.length,
+  };
+}
+
+/** Five one-minute segments along the bottom row, inset from the edges, filling one pixel every 6 seconds. */
 function progressLine(fraction: number): Node {
-  const segment = 12;
+  const segment = 10;
+  const gap = 3;
+  const margin = (72 - (5 * segment + 4 * gap)) / 2;
   const filled = Math.round(fraction * segment * 5);
   let line = "";
   for (let x = 0; x < 72; x++) {
-    const index = Math.floor(x / (segment + 3));
-    const offset = x % (segment + 3);
-    if (offset >= segment) line += ".";
-    else line += index * segment + offset < filled ? "#" : "-";
+    const pos = x - margin;
+    const offset = pos % (segment + gap);
+    if (pos < 0 || pos >= 5 * segment + 4 * gap || offset >= segment) line += ".";
+    else line += Math.floor(pos / (segment + gap)) * segment + offset < filled ? "#" : "-";
   }
   return {
     type: "xpmbitmap",
@@ -107,6 +144,14 @@ function progressLine(fraction: number): Node {
     width: 72,
     height: 1,
   };
+}
+
+function formatIob(iob: number | null): string {
+  return iob === null ? "--U" : `${iob.toFixed(1)}U`;
+}
+
+function formatCob(cob: number | null): string {
+  return cob === null ? "--g" : `${Math.round(cob)}g`;
 }
 
 /** A short status line in place of a reading. */
@@ -132,40 +177,61 @@ function formatDelta(delta: number | null, cfg: Config): string {
 
 // Arrows are drawn as bitmaps: the fonts are ASCII only.
 
-const UP = [
-  "...##...",
-  "..####..",
-  ".######.",
-  "########",
-  "...##...",
-  "...##...",
-  "...##...",
-  "...##...",
-  "...##...",
-  "...##...",
-];
-
-const UP_RIGHT = (() => {
+/** An up arrow: a triangular head as tall as half the width, over a centered shaft. */
+function upArrow(width: number, height: number, shaft: number): string[] {
+  const mid = (width - 1) / 2;
   const grid: string[] = [];
-  for (let y = 0; y < 9; y++) {
+  for (let y = 0; y < height; y++) {
     let line = "";
-    for (let x = 0; x < 9; x++) {
-      const head = (y <= 1 && x >= 2) || (x >= 7 && y <= 6);
-      const shaft = x + y === 8 || x + y === 9;
+    for (let x = 0; x < width; x++) {
+      const reach = y < width / 2 ? y + 0.5 : shaft / 2 - 0.5;
+      line += Math.abs(x - mid) <= reach ? "#" : ".";
+    }
+    grid.push(line);
+  }
+  return grid;
+}
+
+/** An up-right arrow: head along the top and right edges, `thickness` pixels thick, with a diagonal shaft. */
+function upRightArrow(size: number, thickness: number): string[] {
+  const grid: string[] = [];
+  for (let y = 0; y < size; y++) {
+    let line = "";
+    for (let x = 0; x < size; x++) {
+      const head = (y < thickness && x >= thickness) || (x >= size - thickness && y <= size - 3);
+      const shaft = x + y >= size - 1 && x + y <= size + thickness - 2;
       line += head || shaft ? "#" : ".";
     }
     grid.push(line);
   }
   return grid;
-})();
+}
 
 const flipV = (g: string[]) => g.slice().reverse();
 const flipH = (g: string[]) => g.map((line) => line.split("").reverse().join(""));
 const transpose = (g: string[]) => g[0].split("").map((_, x) => g.map((line) => line[x]).join(""));
 const double = (g: string[]) => g.map((line) => `${line}.${line}`);
 
-const RIGHT = flipH(transpose(UP));
-const DOWN = flipV(UP);
+function arrowSet(up: string[], upRight: string[]): Record<Trend, string[] | null> {
+  const down = flipV(up);
+  return {
+    none: null,
+    not_computable: null,
+    rate_out_of_range: null,
+    double_up: double(up),
+    single_up: up,
+    forty_five_up: upRight,
+    flat: flipH(transpose(up)),
+    forty_five_down: flipV(upRight),
+    single_down: down,
+    double_down: double(down),
+  };
+}
+
+/** Beside the value. */
+const ARROWS = arrowSet(upArrow(8, 10, 2), upRightArrow(9, 2));
+/** Alone on screen in the arrow display mode. */
+const BIG_ARROWS = arrowSet(upArrow(12, 12, 4), upRightArrow(12, 3));
 
 /** The way the arrow nudges when animated: one pixel along its direction. */
 export const NUDGE: Record<Trend, [number, number] | null> = {
@@ -179,17 +245,4 @@ export const NUDGE: Record<Trend, [number, number] | null> = {
   forty_five_down: [1, 1],
   single_down: [0, 1],
   double_down: [0, 1],
-};
-
-const ARROWS: Record<Trend, string[] | null> = {
-  none: null,
-  not_computable: null,
-  rate_out_of_range: null,
-  double_up: double(UP),
-  single_up: UP,
-  forty_five_up: UP_RIGHT,
-  flat: RIGHT,
-  forty_five_down: flipV(UP_RIGHT),
-  single_down: DOWN,
-  double_down: double(DOWN),
 };

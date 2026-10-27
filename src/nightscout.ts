@@ -1,5 +1,6 @@
 // Nightscout client: the public entries API, with an optional access token.
 
+import type { Extras } from "./display";
 import { AuthError, parseTrend, type Reading, type Source } from "./reading";
 
 export class Nightscout implements Source {
@@ -40,5 +41,16 @@ export class Nightscout implements Source {
       out.push({ mgdl, trend: parseTrend(item.direction), time });
     }
     return out;
+  }
+
+  /** Insulin and carbs on board, as Nightscout computes them from treatments and loop uploads. */
+  async extras(): Promise<Extras> {
+    let url = `${this.base}/api/v2/properties/iob,cob`;
+    if (this.token) url += `?token=${encodeURIComponent(this.token)}`;
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Nightscout properties HTTP ${response.status}`);
+    const data = JSON.parse(await response.text()) as { iob?: { iob?: unknown }; cob?: { cob?: unknown } };
+    const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+    return { iob: num(data.iob?.iob), cob: num(data.cob?.cob) };
   }
 }

@@ -2,21 +2,6 @@
   "format_version": 1,
   "version": 1,
   "fields": {
-    "source": {
-      "type": "enum",
-      "label": "Data source",
-      "default": "dexcom",
-      "options": [
-        {
-          "value": "dexcom",
-          "label": "Dexcom Share"
-        },
-        {
-          "value": "nightscout",
-          "label": "Nightscout"
-        }
-      ]
-    },
     "dexcom": {
       "type": "group",
       "label": "Dexcom Share",
@@ -64,7 +49,7 @@
         "url": {
           "type": "string",
           "label": "URL",
-          "description": "Your Nightscout site, e.g. https://my-site.herokuapp.com",
+          "description": "Your Nightscout site, e.g. https://my-site.herokuapp.com. Used for COB/IOB, and for glucose when Dexcom isn't set up or isn't working",
           "default": "",
           "max_length": 255
         },
@@ -82,6 +67,30 @@
       "type": "group",
       "label": "Display",
       "fields": {
+        "mode": {
+          "type": "enum",
+          "label": "Display mode",
+          "description": "What sits next to the glucose value. COB/IOB needs a Nightscout URL; without one it shows the delta instead",
+          "default": "delta",
+          "options": [
+            {
+              "value": "delta",
+              "label": "Number + delta"
+            },
+            {
+              "value": "number",
+              "label": "Number only"
+            },
+            {
+              "value": "arrow",
+              "label": "Arrow only"
+            },
+            {
+              "value": "iob_cob",
+              "label": "Number + COB/IOB"
+            }
+          ]
+        },
         "units": {
           "type": "enum",
           "label": "Units",

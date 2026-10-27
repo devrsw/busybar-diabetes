@@ -3,9 +3,9 @@ import { render, type Node } from "@busy-app/busy-lib";
 import manifest from "./appmeta/manifest.json";
 import { loadConfig, type Config } from "./config";
 import { DexcomShare } from "./dexcom";
-import { messageFrame, NUDGE, rangeColor, rangeOf, readingFrame } from "./display";
+import { messageFrame, NUDGE, rangeColor, rangeOf, readingFrame, type Extras } from "./display";
 import { Nightscout } from "./nightscout";
-import { AuthError, type Reading, type Source } from "./reading";
+import { AuthError, type Reading } from "./reading";
 
 /** The name the app draws under; the device clears elements by this id. */
 const APP = manifest.id;
@@ -13,7 +13,7 @@ const APP = manifest.id;
 /** Dexcom sensors report every 5 minutes; Share lags a little behind. */
 const READING_INTERVAL_MS = 5 * 60 * 1000;
 const SHARE_LAG_MS = 20 * 1000;
-/** Nightscout has no login to protect and may carry 1-minute data: check every minute. */
+/** Nightscout has no login to protect and may carry 1-minute data: check every minute while it supplies glucose. */
 const NIGHTSCOUT_POLL_MS = 60 * 1000;
 /** When the expected reading hasn't shown up yet. */
 const RETRY_MS = 30 * 1000;
@@ -30,10 +30,17 @@ const report = (err: unknown) => console.error(`${APP}: ${err instanceof Error ?
 
 function main(): void {
   let cfg: Config | null = null;
-  let client: Source | null = null;
-  let clientKey = "";
+  // Dexcom is the glucose source when set up; Nightscout fills in when it isn't, fails or lags, and always supplies COB/IOB.
+  let dexcom: DexcomShare | null = null;
+  let dexcomKey = "";
+  let nightscout: Nightscout | null = null;
+  let nightscoutKey = "";
+  /** After Dexcom rejects the login, it is left alone until then so the account doesn't get locked. */
+  let dexcomPausedUntil = 0;
+  let dexcomPauseMessage = "";
   let latest: Reading | null = null;
   let deltaMgdl: number | null = null;
+  let extras: Extras | null = null;
   let message = "Loading...";
   let failures = 0;
   let polling = false;
@@ -53,7 +60,7 @@ function main(): void {
   const nudged = () => animTimer !== null && animStep % (ANIM_REST_STEPS + 1) === ANIM_REST_STEPS;
 
   function frame(): Node {
-    if (latest && cfg) return readingFrame(latest, deltaMgdl, cfg, Date.now());
+    if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now());
     return messageFrame(message);
   }
 
@@ -145,28 +152,78 @@ function main(): void {
     if (polling || stopped) return;
     polling = true;
     let next = RETRY_MS;
+    // Source failures are reported where they happen.
+    let dexcomError: unknown = null;
+    let nightscoutError: unknown = null;
     try {
       cfg = await loadConfig(APP);
-      if (missingLogin(cfg)) {
+      const hasDexcom = !!cfg.username && !!cfg.password;
+      const hasNightscout = !!cfg.nsUrl;
+      if (!hasDexcom && !hasNightscout) {
         // Settings are local: check again soon (RETRY_MS) so new credentials show up quickly.
-        throw new AuthError(cfg.source === "nightscout" ? "Set NS URL" : "Set Dexcom login");
+        throw new AuthError("Set Dexcom/NS");
       }
-      const key =
-        cfg.source === "nightscout"
-          ? `ns\n${cfg.nsUrl}\n${cfg.nsToken}`
-          : `dexcom\n${cfg.region}\n${cfg.username}\n${cfg.password}`;
-      if (key !== clientKey) {
-        clientKey = key;
-        client =
-          cfg.source === "nightscout"
-            ? new Nightscout(cfg.nsUrl, cfg.nsToken)
-            : new DexcomShare(cfg.username, cfg.password, cfg.region);
+
+      const dKey = hasDexcom ? `${cfg.region}\n${cfg.username}\n${cfg.password}` : "";
+      const nKey = hasNightscout ? `${cfg.nsUrl}\n${cfg.nsToken}` : "";
+      if (dKey !== dexcomKey || nKey !== nightscoutKey) {
+        if (dKey !== dexcomKey) {
+          dexcom = hasDexcom ? new DexcomShare(cfg.username, cfg.password, cfg.region) : null;
+          dexcomPausedUntil = 0;
+        }
+        nightscout = hasNightscout ? new Nightscout(cfg.nsUrl, cfg.nsToken) : null;
+        dexcomKey = dKey;
+        nightscoutKey = nKey;
         latest = null;
+        extras = null;
         message = "Connecting...";
         void draw().catch(report);
       }
 
-      const readings = await client!.readings(2);
+      const now = Date.now();
+      let readings: Reading[] | null = null;
+      let fromNightscout = false;
+      if (dexcom && now >= dexcomPausedUntil) {
+        try {
+          readings = await dexcom.readings(2);
+        } catch (err) {
+          report(err);
+          dexcomError = err;
+          if (err instanceof AuthError) {
+            dexcomPausedUntil = now + AUTH_RETRY_MS;
+            dexcomPauseMessage = err.message;
+          }
+        }
+      } else if (dexcom) {
+        dexcomError = new AuthError(dexcomPauseMessage);
+      }
+
+      // Nightscout fills in when Dexcom gave nothing current.
+      const dexcomCurrent = !!readings && readings.length > 0 && now - readings[0].time < cfg.staleMinutes * 60 * 1000;
+      if (nightscout && !dexcomCurrent) {
+        try {
+          const fallback = await nightscout.readings(2);
+          if (fallback.length > 0 && (!readings || readings.length === 0 || fallback[0].time > readings[0].time)) {
+            readings = fallback;
+            fromNightscout = true;
+          } else if (!readings) {
+            readings = fallback;
+          }
+        } catch (err) {
+          report(err);
+          nightscoutError = err;
+        }
+      }
+
+      if (nightscout && cfg.displayMode === "iob_cob") {
+        // Shown as "--" when unavailable; never holds up the reading.
+        extras = await nightscout.extras().catch((err) => {
+          report(err);
+          return null;
+        });
+      }
+
+      if (!readings) throw dexcomError ?? nightscoutError ?? new Error("No glucose source answered");
       failures = 0;
       if (readings.length === 0) {
         latest = null;
@@ -177,17 +234,17 @@ function main(): void {
         // A delta across a gap in the data would mislead.
         deltaMgdl = previous && newest.time - previous.time < 11 * 60 * 1000 ? newest.mgdl - previous.mgdl : null;
         // Ask again right after the next reading should land.
-        const maxWait = cfg.source === "nightscout" ? NIGHTSCOUT_POLL_MS : READING_INTERVAL_MS + SHARE_LAG_MS;
+        const maxWait = fromNightscout ? NIGHTSCOUT_POLL_MS : READING_INTERVAL_MS + SHARE_LAG_MS;
         const due = newest.time + READING_INTERVAL_MS + SHARE_LAG_MS - Date.now();
         next = due > 0 ? Math.min(due, maxWait) : RETRY_MS;
       }
     } catch (err) {
-      report(err);
       if (err instanceof AuthError) {
         latest = null;
         message = err.message;
-        next = cfg && missingLogin(cfg) ? RETRY_MS : AUTH_RETRY_MS;
+        next = err.message === "Set Dexcom/NS" ? RETRY_MS : AUTH_RETRY_MS;
       } else {
+        if (err !== dexcomError && err !== nightscoutError) report(err);
         failures += 1;
         next = Math.min(RETRY_MS * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
         // Keep showing the last reading (it greys out as it ages); otherwise say why.
@@ -226,10 +283,6 @@ function main(): void {
     // Not detached from inside the handler itself: with nothing else left the unbind stops the app on the spot, while this handler is still running.
     setTimeout(unbind, 0);
   });
-}
-
-function missingLogin(cfg: Config): boolean {
-  return cfg.source === "nightscout" ? !cfg.nsUrl : !cfg.username || !cfg.password;
 }
 
 main();

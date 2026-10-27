@@ -3,13 +3,13 @@ import { loadValues, type SettingsValues } from "@shared/settings";
 import type { Region } from "./dexcom";
 
 export interface Config {
-  source: "dexcom" | "nightscout";
   username: string;
   password: string;
   region: Region;
   nsUrl: string;
   nsToken: string;
   units: "mgdl" | "mmol";
+  displayMode: "delta" | "number" | "arrow" | "iob_cob";
   staleMinutes: number;
   animateArrow: boolean;
   urgentLow: number;
@@ -54,13 +54,13 @@ export async function loadConfig(appId: string): Promise<Config> {
 
   const region = str("dexcom", "region", "us");
   return {
-    source: str("", "source", "dexcom") === "nightscout" ? "nightscout" : "dexcom",
     username: str("dexcom", "username", "").trim(),
     password: str("dexcom", "password", ""),
     region: region === "ous" || region === "jp" ? region : "us",
     nsUrl: str("nightscout", "url", "").trim(),
     nsToken: str("nightscout", "token", "").trim(),
     units: str("display", "units", "mgdl") === "mmol" ? "mmol" : "mgdl",
+    displayMode: displayMode(str("display", "mode", "delta")),
     staleMinutes: num("display", "stale_minutes", 15),
     animateArrow: get("display", "animate_arrow") !== false,
     urgentLow: num("ranges", "urgent_low", 55),
@@ -81,4 +81,8 @@ export async function loadConfig(appId: string): Promise<Config> {
 /** Settings colors may omit alpha; the display wants #RRGGBBAA. */
 function toRgba(hex: string): string {
   return /^#[0-9a-f]{6}$/i.test(hex) ? `${hex}FF` : hex;
+}
+
+function displayMode(value: string): Config["displayMode"] {
+  return value === "number" || value === "arrow" || value === "iob_cob" ? value : "delta";
 }
