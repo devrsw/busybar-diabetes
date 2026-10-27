@@ -1,8 +1,8 @@
 {
-  "name": "busybar-app",
+  "name": "busybar-diabetes",
   "private": true,
   "version": "1.1.0",
-  "description": "SugarPixel-style Dexcom glucose display",
+  "description": "Dexcom Share and Nightscout glucose display",
   "author": "Scott deVries",
   "type": "module",
   "scripts": {
