@@ -93,12 +93,12 @@ npx -p node@24 npm run app:run -- --addr <bar-ip>
 
 ```sh
 npm install
-npm run build         # build the app into dist/net.scottdevries.glucose.tgz
+npm run build         # build the app into dist/app.glucose.tgz
 npm run app:install   # install it on the BUSY Bar connected over USB
 npm run app:run       # launch the installed app
 ```
 
-The app's id is `net.scottdevries.glucose`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of Latin letters, digits, underscores, dashes, and dots, and not starting with a dot. If yours still says `app.example`, change it to your own namespace before publishing.
+The app's id is `app.glucose`, set in `src/appmeta/manifest.json`. An id is `<namespace>.<app>`, at most 32 characters, made of Latin letters, digits, underscores, dashes, and dots, and not starting with a dot. If yours still says `app.example`, change it to your own namespace before publishing.
 
 ## Layout
 
@@ -152,8 +152,8 @@ Use `short` as the default action for a button press: it fires once, after a nor
 
 | Command | Description |
 | --- | --- |
-| `npm run build` | empties `dist/` and builds the package into `dist/net.scottdevries.glucose.tgz` |
-| `npm run build -- --emit dir` | leaves the `net.scottdevries.glucose/` folder instead of the `.tgz` |
+| `npm run build` | empties `dist/` and builds the package into `dist/app.glucose.tgz` |
+| `npm run build -- --emit dir` | leaves the `app.glucose/` folder instead of the `.tgz` |
 | `npm run build -- --emit both` | leaves the folder and the `.tgz` |
 | `npm run build -- --out <path>` | builds into `<path>` instead, replacing only this app's package there |
 | `npm run build -- --tgz-name <name>` | names the `.tgz`, e.g. `"{id}-{version}.tgz"` |
@@ -161,7 +161,7 @@ Use `short` as the default action for a button press: it fires once, after a nor
 | `npm run build -- --bundle` | inlines every module into one `main.js` |
 | `npm run build -- --addr <host>` | sets the BUSY Bar address the app connects to, `localhost` by default |
 | `npm run typecheck` | type-checks the app |
-| `npm run app:install` | installs `dist/net.scottdevries.glucose.tgz` on the BUSY Bar; build it first with `npm run build` |
+| `npm run app:install` | installs `dist/app.glucose.tgz` on the BUSY Bar; build it first with `npm run build` |
 | `npm run app:uninstall` | removes the app from the BUSY Bar, keeping its settings |
 | `npm run app:run` | launches the installed app |
 | `npm run app:stop` | quits the running app |
@@ -179,13 +179,13 @@ The package folder is named after the app id:
 
 ```
 dist/
-└── net.scottdevries.glucose/
+└── app.glucose/
     ├── appmeta/manifest.json
     ├── scripts/main.js
     └── images/ animations/ sounds/ resources/
 ```
 
-By default the build packs that folder into `dist/net.scottdevries.glucose.tgz`, with the folder itself at the root of the archive, and removes the folder; `--emit dir` keeps only the folder, `--emit both` keeps both. `--tgz-name` gives the archive another name; `{id}` and `{version}` in it are replaced with the manifest values.
+By default the build packs that folder into `dist/app.glucose.tgz`, with the folder itself at the root of the archive, and removes the folder; `--emit dir` keeps only the folder, `--emit both` keeps both. `--tgz-name` gives the archive another name; `{id}` and `{version}` in it are replaced with the manifest values.
 
 ## Manifest
 

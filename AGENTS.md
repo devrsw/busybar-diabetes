@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Instructions for AI coding agents working on `Glucose` (`net.scottdevries.glucose`), a JavaScript application for the BUSY Bar. See [README.md](./README.md) for the full build, packaging and manifest reference.
+Instructions for AI coding agents working on `Glucose` (`app.glucose`), a JavaScript application for the BUSY Bar. See [README.md](./README.md) for the full build, packaging and manifest reference.
 
 The app runs on the bar itself, in the firmware's embedded [JerryScript](https://compat-table.github.io/compat-table/es2016plus/#jerryscript3_0_0) runtime. It is not Node.js and not a browser.
 
