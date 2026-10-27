@@ -1,6 +1,6 @@
 import { column, generateXpm2, row, type Node } from "@busy-app/busy-lib";
 import type { Config } from "./config";
-import type { Reading, Trend } from "./dexcom";
+import type { Reading, Trend } from "./reading";
 
 const SUBTLE = "#FFFFFF99";
 const STALE = "#707070FF";
@@ -127,6 +127,20 @@ const double = (g: string[]) => g.map((line) => `${line}.${line}`);
 
 const RIGHT = flipH(transpose(UP));
 const DOWN = flipV(UP);
+
+/** The way the arrow nudges when animated: one pixel along its direction. */
+export const NUDGE: Record<Trend, [number, number] | null> = {
+  none: null,
+  not_computable: null,
+  rate_out_of_range: null,
+  double_up: [0, -1],
+  single_up: [0, -1],
+  forty_five_up: [1, -1],
+  flat: [1, 0],
+  forty_five_down: [1, 1],
+  single_down: [0, 1],
+  double_down: [0, 1],
+};
 
 const ARROWS: Record<Trend, string[] | null> = {
   none: null,

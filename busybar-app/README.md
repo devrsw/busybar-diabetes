@@ -1,6 +1,6 @@
 # Glucose
 
-A SugarPixel-style continuous glucose display for the BUSY Bar, for people with type 1 diabetes and their followers. It runs on the bar itself and reads from Dexcom Share — no phone, computer or server in between.
+A SugarPixel-style continuous glucose display for the BUSY Bar, for people with type 1 diabetes and their followers. It runs on the bar itself and reads from Dexcom Share or Nightscout — no phone, computer or server in between.
 
 ```
  123 ->  +4
@@ -8,7 +8,7 @@ A SugarPixel-style continuous glucose display for the BUSY Bar, for people with 
 ```
 
 - Big glucose value, colored by range (urgent low, low, in range, high, urgent high)
-- Dexcom trend arrow (double up, up, 45° up, flat, 45° down, down, double down)
+- Trend arrow (double up, up, 45° up, flat, 45° down, down, double down) that gently nudges one pixel in the direction glucose is moving (can be turned off)
 - Change since the previous reading, and minutes since the reading
 - Greys out once the reading is stale, and shows `---` after an hour without data
 - Status LED blinks once for each new urgent low/high reading (can be turned off)
@@ -18,16 +18,22 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 
 ## Setup
 
-1. In the Dexcom app, turn on **Share** and invite at least one follower. Share's servers only serve data for accounts that share.
+1. Pick a data source:
+   - **Dexcom Share:** in the Dexcom app, turn on **Share** and invite at least one follower. Share's servers only serve data for accounts that share.
+   - **Nightscout:** any Nightscout site. If it isn't publicly readable, create an access token with the `readable` role (Admin Tools → Subjects). The API secret is not supported.
 2. Build and install the app (below). Then open its settings on the bar, or in the bar's Web UI under the app's settings, and fill in:
 
 | Setting | |
 | --- | --- |
+| Data source | **Dexcom Share** or **Nightscout** |
 | Dexcom Share → Username | The Dexcom account of the person wearing the sensor (not a follower's). Username, email, or phone number with `+` and country code. |
 | Dexcom Share → Password | That account's password. Stored on the bar, masked in the UI. |
 | Dexcom Share → Region | **United States**, **Outside US**, or **Japan**: where that Dexcom account was created. |
+| Nightscout → URL | Your site, e.g. `https://my-site.herokuapp.com` (`https://` is added if left out) |
+| Nightscout → Access token | Only if the site needs one, e.g. `readable-1a2b3c4d5e6f7a8b` |
 | Display → Units | mg/dL or mmol/L |
 | Display → Stale after | Minutes before the reading greys out (default 15) |
+| Display → Animate trend arrow | Nudge the arrow one pixel along its direction every 2 seconds (default on) |
 | Ranges | Urgent low / low / high / urgent high in mg/dL (55 / 70 / 180 / 250), and whether the LED blinks when urgent |
 | Colors | One color per range |
 
@@ -45,12 +51,19 @@ Settings are re-read every time the app polls, so changes take effect within a f
 | `Set Dexcom login` | Username or password is empty |
 | `Bad login` | Dexcom rejected the username/password, or the region is wrong. The app waits 10 minutes before trying again, so it doesn't lock the account |
 | `Dexcom locked` | Too many failed logins; Dexcom has locked the account for a while |
-| `No data` | Logged in, but no readings in the last 24 hours (is Share on?) |
-| `No connection` | Dexcom couldn't be reached; retries with backoff from 30 s up to 5 min |
+| `No data` | Logged in, but no readings (Dexcom: in the last 24 hours; is Share on?) |
+| `Set NS URL` | Nightscout is selected but the URL is empty |
+| `Set NS token` / `Bad NS token` | The Nightscout site refused the request: it needs a token, or the token is wrong |
+| `Bad NS URL` | Nothing that looks like Nightscout at that URL |
+| `No connection` | The source couldn't be reached; retries with backoff from 30 s up to 5 min |
 
 ## How it polls
 
 Dexcom sensors produce a reading every 5 minutes. The app asks Share for the two newest readings, then sleeps until 20 seconds after the next one is due. If it hasn't arrived yet it asks again every 30 seconds. That's about one request every 5 minutes in normal use.
+
+Nightscout is checked every minute instead, since it has no login to lock and may carry 1-minute data from other sensors.
+
+The arrow animation is two small redraws of the arrow every 2 seconds, on the bar itself. It stops whenever no arrow is shown (stale or missing data).
 
 ## Building with Node 26
 
@@ -67,8 +80,10 @@ npx -p node@24 npm run app:run -- --addr <bar-ip>
 | File | |
 | --- | --- |
 | `src/main.ts` | Poll scheduling, backoff, drawing only changed elements, input |
+| `src/reading.ts` | The reading type and trend parsing shared by both sources |
 | `src/dexcom.ts` | Dexcom Share client (login, session renewal, readings) |
-| `src/display.ts` | Screen layout, range colors, trend arrow bitmaps |
+| `src/nightscout.ts` | Nightscout client (entries API, optional access token) |
+| `src/display.ts` | Screen layout, range colors, trend arrow bitmaps and nudge directions |
 | `src/config.ts` | Reads the settings with defaults |
 | `src/appmeta/settings.json` | The settings screen |
 

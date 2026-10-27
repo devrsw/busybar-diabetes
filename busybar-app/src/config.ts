@@ -3,11 +3,15 @@ import { loadValues, type SettingsValues } from "@shared/settings";
 import type { Region } from "./dexcom";
 
 export interface Config {
+  source: "dexcom" | "nightscout";
   username: string;
   password: string;
   region: Region;
+  nsUrl: string;
+  nsToken: string;
   units: "mgdl" | "mmol";
   staleMinutes: number;
+  animateArrow: boolean;
   urgentLow: number;
   low: number;
   high: number;
@@ -34,6 +38,7 @@ export async function loadConfig(appId: string): Promise<Config> {
   }
   const get = (group: string, key: string): unknown => {
     // Groups come as nested objects; accept flat ids too.
+    if (!group) return values?.[key];
     const nested = values?.[group] as SettingsValues | undefined;
     return nested && typeof nested === "object" ? nested[key] : values?.[key];
   };
@@ -49,11 +54,15 @@ export async function loadConfig(appId: string): Promise<Config> {
 
   const region = str("dexcom", "region", "us");
   return {
+    source: str("", "source", "dexcom") === "nightscout" ? "nightscout" : "dexcom",
     username: str("dexcom", "username", "").trim(),
     password: str("dexcom", "password", ""),
     region: region === "ous" || region === "jp" ? region : "us",
+    nsUrl: str("nightscout", "url", "").trim(),
+    nsToken: str("nightscout", "token", "").trim(),
     units: str("display", "units", "mgdl") === "mmol" ? "mmol" : "mgdl",
     staleMinutes: num("display", "stale_minutes", 15),
+    animateArrow: get("display", "animate_arrow") !== false,
     urgentLow: num("ranges", "urgent_low", 55),
     low: num("ranges", "low", 70),
     high: num("ranges", "high", 180),

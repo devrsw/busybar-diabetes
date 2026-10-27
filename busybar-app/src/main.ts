@@ -2,8 +2,10 @@ import { device } from "@shared/device";
 import { render, type Node } from "@busy-app/busy-lib";
 import manifest from "./appmeta/manifest.json";
 import { loadConfig, type Config } from "./config";
-import { DexcomAuthError, DexcomShare, type Reading } from "./dexcom";
-import { messageFrame, rangeColor, rangeOf, readingFrame } from "./display";
+import { DexcomShare } from "./dexcom";
+import { messageFrame, NUDGE, rangeColor, rangeOf, readingFrame } from "./display";
+import { Nightscout } from "./nightscout";
+import { AuthError, type Reading, type Source } from "./reading";
 
 /** The name the app draws under; the device clears elements by this id. */
 const APP = manifest.id;
@@ -11,6 +13,8 @@ const APP = manifest.id;
 /** Dexcom sensors report every 5 minutes; Share lags a little behind. */
 const READING_INTERVAL_MS = 5 * 60 * 1000;
 const SHARE_LAG_MS = 20 * 1000;
+/** Nightscout has no login to protect and may carry 1-minute data: check every minute. */
+const NIGHTSCOUT_POLL_MS = 60 * 1000;
 /** When the expected reading hasn't shown up yet. */
 const RETRY_MS = 30 * 1000;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
@@ -18,12 +22,15 @@ const MAX_BACKOFF_MS = 5 * 60 * 1000;
 const AUTH_RETRY_MS = 10 * 60 * 1000;
 /** Age is shown in whole minutes. */
 const TICK_MS = 60 * 1000;
+/** Arrow animation: rests for ANIM_REST_STEPS steps, then nudges one pixel for a step. */
+const ANIM_STEP_MS = 400;
+const ANIM_REST_STEPS = 4;
 
 const report = (err: unknown) => console.error(`${APP}: ${err instanceof Error ? err.message : String(err)}`);
 
 function main(): void {
   let cfg: Config | null = null;
-  let client: DexcomShare | null = null;
+  let client: Source | null = null;
   let clientKey = "";
   let latest: Reading | null = null;
   let deltaMgdl: number | null = null;
@@ -40,6 +47,11 @@ function main(): void {
   let drawing = false;
   let redrawPending = false;
 
+  let animTimer: ReturnType<typeof setInterval> | null = null;
+  let animStep = 0;
+  /** Whether the arrow is nudged out on the current step. */
+  const nudged = () => animTimer !== null && animStep % (ANIM_REST_STEPS + 1) === ANIM_REST_STEPS;
+
   function frame(): Node {
     if (latest && cfg) return readingFrame(latest, deltaMgdl, cfg, Date.now());
     return messageFrame(message);
@@ -53,6 +65,14 @@ function main(): void {
     drawing = true;
     try {
       const elements = render(frame());
+      const nudge = latest && NUDGE[latest.trend];
+      if (nudge && nudged()) {
+        for (const el of elements) {
+          if (el.id !== "arrow") continue;
+          el.x = (el.x ?? 0) + nudge[0];
+          el.y = (el.y ?? 0) + nudge[1];
+        }
+      }
       const next = new Map<string, string>();
       const changed = [];
       for (const el of elements) {
@@ -81,6 +101,7 @@ function main(): void {
         });
       }
       shown = next;
+      animate();
     } catch (err) {
       // Resend everything next time; the screen state is unknown.
       shown = new Map();
@@ -91,6 +112,23 @@ function main(): void {
         redrawPending = false;
         void draw().catch(report);
       }
+    }
+  }
+
+  /** Runs the arrow animation only while an arrow is on screen and it is turned on. */
+  function animate(): void {
+    const wanted = !stopped && !!cfg?.animateArrow && !!latest && !!NUDGE[latest.trend] && shown.has("arrow");
+    if (wanted && !animTimer) {
+      animStep = 0;
+      animTimer = setInterval(() => {
+        const was = nudged();
+        animStep += 1;
+        // Only the rest/nudge transitions change the screen.
+        if (nudged() !== was) void draw().catch(report);
+      }, ANIM_STEP_MS);
+    } else if (!wanted && animTimer) {
+      clearInterval(animTimer);
+      animTimer = null;
     }
   }
 
@@ -109,20 +147,26 @@ function main(): void {
     let next = RETRY_MS;
     try {
       cfg = await loadConfig(APP);
-      if (!cfg.username || !cfg.password) {
+      if (missingLogin(cfg)) {
         // Settings are local: check again soon (RETRY_MS) so new credentials show up quickly.
-        throw new DexcomAuthError("Set Dexcom login");
+        throw new AuthError(cfg.source === "nightscout" ? "Set NS URL" : "Set Dexcom login");
       }
-      const key = `${cfg.region}\n${cfg.username}\n${cfg.password}`;
+      const key =
+        cfg.source === "nightscout"
+          ? `ns\n${cfg.nsUrl}\n${cfg.nsToken}`
+          : `dexcom\n${cfg.region}\n${cfg.username}\n${cfg.password}`;
       if (key !== clientKey) {
         clientKey = key;
-        client = new DexcomShare(cfg.username, cfg.password, cfg.region);
+        client =
+          cfg.source === "nightscout"
+            ? new Nightscout(cfg.nsUrl, cfg.nsToken)
+            : new DexcomShare(cfg.username, cfg.password, cfg.region);
         latest = null;
         message = "Connecting...";
         void draw().catch(report);
       }
 
-      const readings = await client!.readings(2, 24 * 60);
+      const readings = await client!.readings(2);
       failures = 0;
       if (readings.length === 0) {
         latest = null;
@@ -133,15 +177,16 @@ function main(): void {
         // A delta across a gap in the data would mislead.
         deltaMgdl = previous && newest.time - previous.time < 11 * 60 * 1000 ? newest.mgdl - previous.mgdl : null;
         // Ask again right after the next reading should land.
+        const maxWait = cfg.source === "nightscout" ? NIGHTSCOUT_POLL_MS : READING_INTERVAL_MS + SHARE_LAG_MS;
         const due = newest.time + READING_INTERVAL_MS + SHARE_LAG_MS - Date.now();
-        next = due > 0 ? Math.min(due, READING_INTERVAL_MS + SHARE_LAG_MS) : RETRY_MS;
+        next = due > 0 ? Math.min(due, maxWait) : RETRY_MS;
       }
     } catch (err) {
       report(err);
-      if (err instanceof DexcomAuthError) {
+      if (err instanceof AuthError) {
         latest = null;
         message = err.message;
-        next = cfg && (!cfg.username || !cfg.password) ? RETRY_MS : AUTH_RETRY_MS;
+        next = cfg && missingLogin(cfg) ? RETRY_MS : AUTH_RETRY_MS;
       } else {
         failures += 1;
         next = Math.min(RETRY_MS * Math.pow(2, failures - 1), MAX_BACKOFF_MS);
@@ -175,11 +220,16 @@ function main(): void {
 
     stopped = true;
     clearInterval(ticker);
+    if (animTimer) clearInterval(animTimer);
     if (pollTimer) clearTimeout(pollTimer);
 
     // Not detached from inside the handler itself: with nothing else left the unbind stops the app on the spot, while this handler is still running.
     setTimeout(unbind, 0);
   });
+}
+
+function missingLogin(cfg: Config): boolean {
+  return cfg.source === "nightscout" ? !cfg.nsUrl : !cfg.username || !cfg.password;
 }
 
 main();

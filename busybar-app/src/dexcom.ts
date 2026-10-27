@@ -3,28 +3,7 @@
 
 export type Region = "us" | "ous" | "jp";
 
-export type Trend =
-  | "none"
-  | "double_up"
-  | "single_up"
-  | "forty_five_up"
-  | "flat"
-  | "forty_five_down"
-  | "single_down"
-  | "double_down"
-  | "not_computable"
-  | "rate_out_of_range";
-
-export interface Reading {
-  /** mg/dL, as reported by Dexcom (39 means below 40, 401 above 400). */
-  mgdl: number;
-  trend: Trend;
-  /** Sensor time, ms since epoch. */
-  time: number;
-}
-
-/** A failure the user has to fix (wrong password, Share off); retrying soon won't help. */
-export class DexcomAuthError extends Error {}
+import { AuthError, parseTrend, type Reading, type Source } from "./reading";
 
 const SERVERS: Record<Region, { base: string; appId: string }> = {
   us: {
@@ -40,20 +19,6 @@ const SERVERS: Record<Region, { base: string; appId: string }> = {
     appId: "d8665ade-9673-4e27-9ff6-92db4ce13d13",
   },
 };
-
-// Dexcom's trend names, in the order of its older numeric codes.
-const TRENDS: [string, Trend][] = [
-  ["None", "none"],
-  ["DoubleUp", "double_up"],
-  ["SingleUp", "single_up"],
-  ["FortyFiveUp", "forty_five_up"],
-  ["Flat", "flat"],
-  ["FortyFiveDown", "forty_five_down"],
-  ["SingleDown", "single_down"],
-  ["DoubleDown", "double_down"],
-  ["NotComputable", "not_computable"],
-  ["RateOutOfRange", "rate_out_of_range"],
-];
 
 const NULL_ID = "00000000-0000-0000-0000-000000000000";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -76,7 +41,7 @@ class DexcomRequestError extends Error {
   }
 }
 
-export class DexcomShare {
+export class DexcomShare implements Source {
   private readonly username: string;
   private readonly password: string;
   private readonly region: Region;
@@ -90,7 +55,7 @@ export class DexcomShare {
   }
 
   /** The latest readings, newest first; at most `count`, from the last `minutes`. */
-  async readings(count: number, minutes = 30): Promise<Reading[]> {
+  async readings(count: number, minutes = 24 * 60): Promise<Reading[]> {
     if (!this.sessionId) await this.login();
     try {
       return await this.fetchReadings(count, minutes);
@@ -122,7 +87,7 @@ export class DexcomShare {
   private async login(): Promise<void> {
     const { appId } = SERVERS[this.region];
     if (!this.username || !this.password) {
-      throw new DexcomAuthError("Set Dexcom login");
+      throw new AuthError("Set Dexcom login");
     }
     try {
       if (!this.accountId) {
@@ -142,7 +107,7 @@ export class DexcomShare {
       });
     } catch (err) {
       if (err instanceof DexcomRequestError && AUTH_CODES.indexOf(err.code) >= 0) {
-        throw new DexcomAuthError(err.code.indexOf("MaxAttempts") >= 0 ? "Dexcom locked" : "Bad login");
+        throw new AuthError(err.code.indexOf("MaxAttempts") >= 0 ? "Dexcom locked" : "Bad login");
       }
       throw err;
     }
@@ -150,7 +115,7 @@ export class DexcomShare {
 
   private async postId(path: string, body: object): Promise<string> {
     const id = await this.post(path, body);
-    if (typeof id !== "string" || id === NULL_ID) throw new DexcomAuthError("Bad login");
+    if (typeof id !== "string" || id === NULL_ID) throw new AuthError("Bad login");
     return id;
   }
 
@@ -187,10 +152,3 @@ function parseReading(item: Record<string, unknown>): Reading | null {
   return { mgdl, trend: parseTrend(item.Trend), time: Number(match[1]) };
 }
 
-function parseTrend(value: unknown): Trend {
-  if (typeof value === "number") return TRENDS[value]?.[1] ?? "none";
-  for (const [name, trend] of TRENDS) {
-    if (name === value) return trend;
-  }
-  return "none";
-}
