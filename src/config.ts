@@ -9,7 +9,7 @@ export interface Config {
   nsUrl: string;
   nsToken: string;
   units: "mgdl" | "mmol";
-  displayMode: "delta" | "number" | "arrow" | "iob_cob";
+  displayMode: "delta" | "number" | "arrow" | "iob" | "iob_cob";
   staleMinutes: number;
   animateArrow: boolean;
   urgentLow: number;
@@ -84,5 +84,5 @@ function toRgba(hex: string): string {
 }
 
 function displayMode(value: string): Config["displayMode"] {
-  return value === "number" || value === "arrow" || value === "iob_cob" ? value : "delta";
+  return value === "number" || value === "arrow" || value === "iob" || value === "iob_cob" ? value : "delta";
 }

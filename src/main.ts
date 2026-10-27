@@ -3,7 +3,8 @@ import { render, type Node } from "@busy-app/busy-lib";
 import manifest from "./appmeta/manifest.json";
 import { loadConfig, type Config } from "./config";
 import { DexcomShare } from "./dexcom";
-import { messageFrame, NUDGE, rangeColor, rangeOf, readingFrame, type Extras } from "./display";
+import { messageFrame, rangeColor, rangeOf, readingFrame, type Extras } from "./display";
+import { FRAME_MS, STILL, tweenAt, tweenFor, type Fx, type Tween } from "./motion";
 import { Nightscout } from "./nightscout";
 import { AuthError, type Reading } from "./reading";
 
@@ -22,9 +23,6 @@ const MAX_BACKOFF_MS = 5 * 60 * 1000;
 const AUTH_RETRY_MS = 10 * 60 * 1000;
 /** The progress line gains a pixel every 5 seconds. */
 const TICK_MS = 5 * 1000;
-/** Arrow animation: rests for ANIM_REST_STEPS steps, then nudges one pixel for a step. */
-const ANIM_STEP_MS = 400;
-const ANIM_REST_STEPS = 4;
 
 const report = (err: unknown) => console.error(`${APP}: ${err instanceof Error ? err.message : String(err)}`);
 
@@ -54,13 +52,13 @@ function main(): void {
   let drawing = false;
   let redrawPending = false;
 
+  // The value counting to a new reading. The arrow's glide is an animation the bar plays by itself.
   let animTimer: ReturnType<typeof setInterval> | null = null;
-  let animStep = 0;
-  /** Whether the arrow is nudged out on the current step. */
-  const nudged = () => animTimer !== null && animStep % (ANIM_REST_STEPS + 1) === ANIM_REST_STEPS;
+  let tween: Tween | null = null;
+  let fx: Fx = STILL;
 
   function frame(): Node {
-    if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now());
+    if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now(), fx);
     return messageFrame(message);
   }
 
@@ -72,14 +70,6 @@ function main(): void {
     drawing = true;
     try {
       const elements = render(frame());
-      const nudge = latest && NUDGE[latest.trend];
-      if (nudge && nudged()) {
-        for (const el of elements) {
-          if (el.id !== "arrow") continue;
-          el.x = (el.x ?? 0) + nudge[0];
-          el.y = (el.y ?? 0) + nudge[1];
-        }
-      }
       const next = new Map<string, string>();
       const changed = [];
       for (const el of elements) {
@@ -122,20 +112,32 @@ function main(): void {
     }
   }
 
-  /** Runs the arrow animation only while an arrow is on screen and it is turned on. */
+  /** The animation frame at this moment. */
+  function currentFx(): Fx {
+    const counting = tween ? tweenAt(tween, Date.now()) : null;
+    if (!counting) tween = null;
+    return { mgdl: counting?.mgdl ?? null, flash: counting?.flash ?? 0 };
+  }
+
+  /** Runs the animation timer only while the value is counting. */
   function animate(): void {
-    const wanted = !stopped && !!cfg?.animateArrow && !!latest && !!NUDGE[latest.trend] && shown.has("arrow");
+    const wanted = !stopped && tween !== null;
     if (wanted && !animTimer) {
-      animStep = 0;
       animTimer = setInterval(() => {
-        const was = nudged();
-        animStep += 1;
-        // Only the rest/nudge transitions change the screen.
-        if (nudged() !== was) void draw().catch(report);
-      }, ANIM_STEP_MS);
+        const next = currentFx();
+        // Only redraw when the shown value or its flash changes.
+        const changed =
+          next.flash !== fx.flash ||
+          (next.mgdl === null) !== (fx.mgdl === null) ||
+          (next.mgdl !== null && fx.mgdl !== null && Math.round(next.mgdl) !== Math.round(fx.mgdl));
+        fx = next;
+        if (changed) void draw().catch(report);
+        if (!tween) animate();
+      }, FRAME_MS);
     } else if (!wanted && animTimer) {
       clearInterval(animTimer);
       animTimer = null;
+      fx = STILL;
     }
   }
 
@@ -215,7 +217,7 @@ function main(): void {
         }
       }
 
-      if (nightscout && cfg.displayMode === "iob_cob") {
+      if (nightscout && (cfg.displayMode === "iob" || cfg.displayMode === "iob_cob")) {
         // Shown as "--" when unavailable; never holds up the reading.
         extras = await nightscout.extras().catch((err) => {
           report(err);
@@ -230,7 +232,13 @@ function main(): void {
         message = "No data";
       } else {
         const [newest, previous] = readings;
+        // A new reading counts up or down from what is on screen.
+        if (latest && newest.time !== latest.time && cfg.displayMode !== "arrow") {
+          tween = tweenFor(fx.mgdl ?? latest.mgdl, newest.mgdl, Date.now());
+        }
         latest = newest;
+        // Start from the old value, not a flash of the new one.
+        if (tween) fx = currentFx();
         // A delta across a gap in the data would mislead.
         deltaMgdl = previous && newest.time - previous.time < 11 * 60 * 1000 ? newest.mgdl - previous.mgdl : null;
         // Ask again right after the next reading should land.

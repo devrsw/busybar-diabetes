@@ -1,5 +1,6 @@
 import { column, generateXpm2, row, textWidth, type DeviceFont, type Node } from "@busy-app/busy-lib";
 import type { Config } from "./config";
+import { mixColor, STILL, type Fx } from "./motion";
 import type { Reading, Trend } from "./reading";
 
 const SUBTLE = "#FFFFFF99";
@@ -49,8 +50,15 @@ export interface Extras {
   cob: number | null;
 }
 
-/** The glucose screen in the configured display mode, over a line counting down to the next reading. */
-export function readingFrame(latest: Reading, deltaMgdl: number | null, extras: Extras | null, cfg: Config, now: number): Node {
+/** The glucose screen in the configured display mode, over a line counting down to the next reading. `fx` is the current frame of the value's count. */
+export function readingFrame(
+  latest: Reading,
+  deltaMgdl: number | null,
+  extras: Extras | null,
+  cfg: Config,
+  now: number,
+  fx: Fx = STILL,
+): Node {
   const age = Math.max(0, now - latest.time);
   const minutes = Math.floor(age / 60000);
   if (minutes >= EXPIRED_MINUTES) {
@@ -61,20 +69,22 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, extras: 
   }
 
   const stale = minutes >= cfg.staleMinutes;
-  const color = stale ? STALE : rangeColor(rangeOf(latest.mgdl, cfg), cfg);
-  const value = formatValue(latest.mgdl, cfg);
+  // While counting toward a new reading, the color follows the count through the ranges.
+  const mgdl = stale || fx.mgdl === null ? latest.mgdl : fx.mgdl;
+  const color = stale ? STALE : mixColor(rangeColor(rangeOf(mgdl, cfg), cfg), "#FFFFFFFF", fx.flash * 0.8);
+  const value = formatValue(mgdl, cfg);
   const valueNode: Node = { type: "text", id: "value", text: value, font: "extra_large", color };
   const small = stale ? null : ARROWS[latest.trend];
 
   let mode = cfg.displayMode;
   // IOB/COB only come from Nightscout; a missing arrow leaves the arrow mode nothing to show.
-  if (mode === "iob_cob" && !cfg.nsUrl) mode = "delta";
+  if ((mode === "iob" || mode === "iob_cob") && !cfg.nsUrl) mode = "delta";
   const big = stale ? null : BIG_ARROWS[latest.trend];
   if (mode === "arrow" && !big) mode = "number";
 
   const children: Node[] = [];
   if (mode === "arrow") {
-    children.push(arrowNode(big!, color));
+    children.push(arrowNode(big!, color, latest.trend, "big", cfg.animateArrow));
   } else if (mode === "number") {
     children.push(valueNode);
   } else if (mode === "iob_cob") {
@@ -86,18 +96,18 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, extras: 
     const linesWidth = Math.max(textWidth(formatCob(extras?.cob ?? null), "small"), textWidth(formatIob(extras?.iob ?? null), "small"));
     // The arrow goes first when space runs short.
     if (small && textWidth(value, "extra_large") + small[0].length + linesWidth + 2 * GAP <= 72) {
-      children.push(arrowNode(small, color));
+      children.push(arrowNode(small, color, latest.trend, "small", cfg.animateArrow));
     }
     children.push(lines);
   } else {
     children.push(valueNode);
     let used = textWidth(value, "extra_large");
     if (small) {
-      children.push(arrowNode(small, color));
+      children.push(arrowNode(small, color, latest.trend, "small", cfg.animateArrow));
       used += GAP + small[0].length;
     }
-    // Once stale, the age replaces the delta: the progress line no longer says how old the reading is.
-    const side = stale ? `${minutes}m` : formatDelta(deltaMgdl, cfg);
+    // Once stale, the age takes this spot: the progress line no longer says how old the reading is.
+    const side = stale ? `${minutes}m` : mode === "iob" ? formatIob(extras?.iob ?? null) : formatDelta(deltaMgdl, cfg);
     let font = DELTA_FONTS[DELTA_FONTS.length - 1].font;
     for (const candidate of DELTA_FONTS) {
       if (used + GAP + textWidth(side, candidate.font) <= 72) {
@@ -114,11 +124,33 @@ export function readingFrame(latest: Reading, deltaMgdl: number | null, extras: 
   ]);
 }
 
-function arrowNode(grid: string[], color: string): Node {
+/** Colors the arrow animations are rendered in: the color options in settings.json. */
+const ANIM_COLORS = ["FF0000", "FF3000", "FF6000", "FFC000", "FFFF00", "00FF30", "00FFC0", "00C0FF", "0060FF", "A040FF", "FF40C0", "FFFFFF"];
+/** The animations' canvas extends this far past the arrow along its direction, so it can glide. */
+const ANIM_PAD = 3;
+
+/** The arrow: a glide animation played by the bar (tools/make_arrow_anims.py), or a still bitmap. */
+function arrowNode(grid: string[], color: string, trend: Trend, size: "small" | "big", animate: boolean): Node {
+  const hex = color.slice(1, 7).toUpperCase();
+  const direction = NUDGE[trend];
+  // Colors mid-flash have no animation; they show the still arrow until the flash ends.
+  if (animate && direction && ANIM_COLORS.indexOf(hex) >= 0) {
+    return {
+      type: "animation",
+      id: "arrow_anim",
+      path: `animations/arrow-${size}-${trend}-${hex}.anim`,
+      loop: true,
+      // Laid out at the arrow's size; the padded canvas is shifted back over it.
+      width: grid[0].length,
+      height: grid.length,
+      dx: direction[0] ? -ANIM_PAD : 0,
+      dy: direction[1] ? -ANIM_PAD : 0,
+    };
+  }
   return {
     type: "xpmbitmap",
     id: "arrow",
-    data: generateXpm2({ palette: { "#": color, ".": "none" }, grid }),
+    data: generateXpm2({ palette: { "#": color.slice(0, 7), ".": "none" }, grid }),
     width: grid[0].length,
     height: grid.length,
   };
@@ -233,7 +265,7 @@ const ARROWS = arrowSet(upArrow(8, 10, 2), upRightArrow(9, 2));
 /** Alone on screen in the arrow display mode. */
 const BIG_ARROWS = arrowSet(upArrow(12, 12, 4), upRightArrow(12, 3));
 
-/** The way the arrow nudges when animated: one pixel along its direction. */
+/** The direction the arrow glides when animated: also which way the animations' canvas is padded. */
 export const NUDGE: Record<Trend, [number, number] | null> = {
   none: null,
   not_computable: null,

@@ -2,14 +2,22 @@
 
 A continuous glucose display for the BUSY Bar, for people with type 1 diabetes and their followers. It runs on the bar itself and reads from Dexcom Share or Nightscout — no phone, computer or server in between.
 
-```
- 119 -> +2
- ############...######------...------------...------------...------------
-```
+![Glucose on a BUSY Bar: 8.4 mmol/L with a down arrow traveling in a loop, and -0.9 change](docs/screenshots/arrow-loop.png)
+
+| View | |
+| --- | --- |
+| Number + delta | ![8.4 down -0.9](docs/screenshots/view-delta.png) |
+| Number only | ![8.4](docs/screenshots/view-number.png) |
+| Arrow only | ![A large down arrow](docs/screenshots/view-arrow.png) |
+| Number + IOB | ![8.4 down 0.6U](docs/screenshots/view-iob.png) |
+| Number + COB/IOB | ![8.4 down, 0g over 0.6U](docs/screenshots/view-iob_cob.png) |
+
+Captured from a bar with `tools/screenshot.py`. The dotted line along the bottom fills toward the next reading.
 
 - Big glucose value, colored by range (urgent low, low, in range, high, urgent high)
-- Trend arrow (double up, up, 45° up, flat, 45° down, down, double down) that gently nudges one pixel in the direction glucose is moving (can be turned off)
-- Four display modes: number + delta, number only, arrow only, or number + carbs and insulin on board (Nightscout)
+- Trend arrow (double up, up, 45° up, flat, 45° down, down, double down) that travels along its direction in a smooth loop, fading in and out; the faster glucose is changing, the faster it moves (can be turned off)
+- When a new reading arrives, the value counts to it from the old one, longer for bigger jumps; a jump of 20 mg/dL or more starts with a bright flash
+- Five display modes: number + delta, number only, arrow only, number + insulin on board, or number + carbs and insulin on board (IOB and COB from Nightscout)
 - Change since the previous reading, at the same size as the value (it steps down a font size only if it wouldn't fit)
 - A progress line along the bottom showing time toward the next 5-minute Dexcom reading: five one-minute segments, inset from the edges, that fill one pixel every 6 seconds and stay full once the reading is due
 - Greys out once the reading is stale, showing its age in red in place of the change; shows `---` after an hour without data
@@ -35,10 +43,10 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 | Dexcom Share → Region | **United States**, **Outside US**, or **Japan**: where that Dexcom account was created. |
 | Nightscout → URL | Your site, e.g. `https://my-site.herokuapp.com` (`https://` is added if left out) |
 | Nightscout → Access token | Only if the site needs one, e.g. `readable-1a2b3c4d5e6f7a8b` |
-| Display → Display mode | **Number + delta** (default), **Number only**, **Arrow only** (a larger arrow; shows the number while the reading is stale or has no trend), or **Number + COB/IOB**: carbs on board over insulin on board, from Nightscout (`/api/v2/properties`, so it works with Loop, AAPS, OpenAPS or logged treatments). Needs a Nightscout URL, even when Dexcom supplies glucose; without one it shows the delta instead. Shows `--g` / `--U` if Nightscout can't be read (check the token). |
+| Display → Display mode | **Number + delta** (default), **Number only**, **Arrow only** (a larger arrow; shows the number while the reading is stale or has no trend), **Number + IOB** (insulin on board in the delta's place, e.g. `0.8U`), or **Number + COB/IOB**: carbs on board over insulin on board, from Nightscout (`/api/v2/properties`, so it works with Loop, AAPS, OpenAPS or logged treatments). The IOB modes need a Nightscout URL, even when Dexcom supplies glucose; without one they show the delta instead. Shows `--U` / `--g` if Nightscout can't be read (check the token). |
 | Display → Units | mg/dL or mmol/L |
 | Display → Stale after | Minutes before the reading greys out (default 15) |
-| Display → Animate trend arrow | Nudge the arrow one pixel along its direction every 2 seconds (default on) |
+| Display → Animate trend arrow | Loop the arrow along its direction (default on). One pass takes 3.2 s when flat, 2.4 s at 45°, 1.6 s for a single arrow and 1.1 s for a double arrow, following Dexcom's rate bands (under 1, 1–2, 2–3 and over 3 mg/dL per minute). |
 | Ranges | Urgent low / low / high / urgent high in mg/dL (55 / 70 / 180 / 250), and whether the LED blinks when urgent |
 | Colors | One color per range, picked from a list (red, orange, amber, yellow, green, teal, cyan, blue, purple, pink, white) |
 
@@ -67,7 +75,7 @@ Dexcom sensors produce a reading every 5 minutes. The app asks Share for the two
 
 While Nightscout is supplying glucose it is checked every minute, since it has no login to lock and may carry 1-minute data from other sensors. After Dexcom rejects a login, the app leaves Dexcom alone for 10 minutes (so the account doesn't get locked) and uses Nightscout meanwhile.
 
-The arrow animation is two small redraws of the arrow every 2 seconds, on the bar itself. It stops whenever no arrow is shown (stale or missing data).
+The arrow loop is a native animation the bar plays by itself, like the stock Weather app's icons, so it costs no requests. The animations are pre-rendered for every arrow, size and color option by `tools/make_arrow_anims.py` into `src/animations/`; run it again after changing arrow shapes, colors or timing. The value's count to a new reading is drawn by the app, a few frames a second for up to 2.2 seconds.
 
 ## Building with Node 26
 
@@ -87,7 +95,11 @@ npx -p node@24 npm run app:run -- --addr <bar-ip>
 | `src/reading.ts` | The reading type and trend parsing shared by both sources |
 | `src/dexcom.ts` | Dexcom Share client (login, session renewal, readings) |
 | `src/nightscout.ts` | Nightscout client (entries API, optional access token) |
-| `src/display.ts` | Screen layout, range colors, trend arrow bitmaps and nudge directions |
+| `src/display.ts` | Screen layout, range colors, trend arrow bitmaps and directions |
+| `src/motion.ts` | The value's count to a new reading |
+| `src/animations/` | Generated arrow loop animations |
+| `tools/make_arrow_anims.py` | Generates the arrow animations (`.anim`, the bar's native format) |
+| `tools/screenshot.py` | LED-style screenshots and animated captures from a bar |
 | `src/config.ts` | Reads the settings with defaults |
 | `src/appmeta/settings.json` | The settings screen |
 

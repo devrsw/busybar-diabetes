@@ -70,7 +70,7 @@
         "mode": {
           "type": "enum",
           "label": "Display mode",
-          "description": "What sits next to the glucose value. COB/IOB needs a Nightscout URL; without one it shows the delta instead",
+          "description": "What sits next to the glucose value. IOB and COB/IOB need a Nightscout URL; without one they show the delta instead",
           "default": "delta",
           "options": [
             {
@@ -88,6 +88,10 @@
             {
               "value": "iob_cob",
               "label": "Number + COB/IOB"
+            },
+            {
+              "value": "iob",
+              "label": "Number + IOB"
             }
           ]
         },
@@ -118,7 +122,7 @@
         "animate_arrow": {
           "type": "boolean",
           "label": "Animate trend arrow",
-          "description": "Gently nudge the arrow in the direction glucose is moving",
+          "description": "Loop the arrow along its direction, faster the faster glucose is changing",
           "default": true
         }
       }
