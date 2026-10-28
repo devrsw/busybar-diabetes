@@ -57,7 +57,7 @@ Settings are re-read every time the app polls, so changes take effect within a f
 
 | Control | |
 | --- | --- |
-| **Turn the knob** | Next or previous view. Its name shows for a moment, with dots marking where it is in the list. The IOB views are skipped when no Nightscout URL is set. |
+| **Turn the knob** | Next or previous view, shown straight away. For a moment the bottom row shows dots marking where it is in the list (Number + delta, Number only, Arrow only, Number + IOB, COB + IOB), then the progress line returns. The IOB views are skipped when no Nightscout URL is set. A quick flick back the other way within 0.15 s is ignored, so the knob's contacts bouncing doesn't undo a step. |
 | **Press the knob** | Open or close a chart of the last hour: a dot per reading in its range color, dotted lines at your low and high thresholds, and the current value. The scale fits the readings, so small swings show. While it is open the app fetches the hour's readings. |
 | **Hold the knob** (0.6 s) | Switch between mg/dL and mmol/L |
 | **Start** | Same as pressing (or holding) the knob |

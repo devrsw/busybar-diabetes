@@ -50,7 +50,7 @@ export interface Extras {
   cob: number | null;
 }
 
-/** The glucose screen in the configured display mode, over a line counting down to the next reading. `fx` is the current frame of the value's count. */
+/** The glucose screen in the configured display mode, over a line counting down to the next reading. `fx` is the current frame of the value's count; `dots` [index, count] marks a view just switched to. */
 export function readingFrame(
   latest: Reading,
   deltaMgdl: number | null,
@@ -58,6 +58,7 @@ export function readingFrame(
   cfg: Config,
   now: number,
   fx: Fx = STILL,
+  dots: [number, number] | null = null,
 ): Node {
   const age = Math.max(0, now - latest.time);
   const minutes = Math.floor(age / 60000);
@@ -120,7 +121,8 @@ export function readingFrame(
 
   return column({ width: 72, height: 16, gap: 1 }, [
     row({ width: 72, height: 14, justify: "center", align: "center", gap: GAP }, children),
-    progressLine(Math.min(1, age / READING_MS)),
+    // Just after switching views, dots mark the view's place in the list in place of the progress line.
+    dots ? dotsLine("progress", dots[0], dots[1]) : progressLine(Math.min(1, age / READING_MS)),
   ]);
 }
 
@@ -239,27 +241,30 @@ export function chartFrame(history: Reading[], latest: Reading, cfg: Config, now
   ]);
 }
 
-/** A brief overlay while using the knob: a label, and dots marking `index` of `count` along the bottom. */
-export function toastFrame(text: string, index = -1, count = 0): Node {
-  const label: Node = { type: "text", id: "toast", text, font: "small", color: "#FFFFFFFF" };
-  if (count < 2) return row({ width: 72, height: 16, justify: "center", align: "center" }, [label]);
-  // Dots 4 px wide, 2 px apart, centered on the bottom row; the current one bright.
+/** Dots 4 px wide, 2 px apart, centered on one row: the one at `index` bright. */
+function dotsLine(id: string, index: number, count: number): Node {
   const width = count * 6 - 2;
   let line = "";
   for (let x = 0; x < 72; x++) {
     const pos = x - Math.floor((72 - width) / 2);
-    const dot = Math.floor(pos / 6);
-    line += pos < 0 || pos >= width || pos % 6 >= 4 ? "." : dot === index ? "#" : "-";
+    line += pos < 0 || pos >= width || pos % 6 >= 4 ? "." : Math.floor(pos / 6) === index ? "#" : "-";
   }
+  return {
+    type: "xpmbitmap",
+    id,
+    data: generateXpm2({ palette: { "#": "#FFFFFF", "-": "#404040", ".": "none" }, grid: [line] }),
+    width: 72,
+    height: 1,
+  };
+}
+
+/** A brief label while using the knob, with dots marking `index` of `count` along the bottom when given. */
+export function toastFrame(text: string, index = -1, count = 0): Node {
+  const label: Node = { type: "text", id: "toast", text, font: "small", color: "#FFFFFFFF" };
+  if (count < 2) return row({ width: 72, height: 16, justify: "center", align: "center" }, [label]);
   return column({ width: 72, height: 16, gap: 1 }, [
     row({ width: 72, height: 14, justify: "center", align: "center" }, [label]),
-    {
-      type: "xpmbitmap",
-      id: "toast_dots",
-      data: generateXpm2({ palette: { "#": "#FFFFFF", "-": "#404040", ".": "none" }, grid: [line] }),
-      width: 72,
-      height: 1,
-    },
+    dotsLine("toast_dots", index, count),
   ]);
 }
 

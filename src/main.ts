@@ -26,6 +26,10 @@ const AUTH_RETRY_MS = 10 * 60 * 1000;
 const HOLD_MS = 600;
 /** How long the knob's overlays stay up. */
 const TOAST_MS = 1200;
+/** How long the position dots show after switching views. */
+const DOTS_MS = 1500;
+/** A turn the other way this soon after the last step is contact bounce, not the user. */
+const BOUNCE_MS = 150;
 /** Knob choices are saved once the knob has been still this long: each save rewrites flash. */
 const KNOB_SAVE_MS = 3000;
 /** The progress line gains a pixel every 5 seconds. */
@@ -43,6 +47,9 @@ function main(): void {
   // A brief overlay while using the knob.
   let toast: { text: string; index: number; count: number } | null = null;
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  // Just after switching views: the view's place in the list, shown on the bottom row.
+  let viewDots: [number, number] | null = null;
+  let dotsTimer: ReturnType<typeof setTimeout> | null = null;
   let knobSaveTimer: ReturnType<typeof setTimeout> | null = null;
   // Dexcom is the glucose source when set up; Nightscout fills in when it isn't, fails or lags, and always supplies COB/IOB.
   let dexcom: DexcomShare | null = null;
@@ -76,7 +83,7 @@ function main(): void {
   function frame(): Node {
     if (toast) return toastFrame(toast.text, toast.index, toast.count);
     if (chartOpen && latest && cfg) return chartFrame(history, latest, cfg, Date.now());
-    if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now(), fx);
+    if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now(), fx, viewDots);
     return messageFrame(message);
   }
 
@@ -302,6 +309,7 @@ function main(): void {
   function showToast(text: string, index = -1, count = 0): void {
     toast = { text, index, count };
     if (toastTimer) clearTimeout(toastTimer);
+    if (dotsTimer) clearTimeout(dotsTimer);
     toastTimer = setTimeout(() => {
       toastTimer = null;
       toast = null;
@@ -332,7 +340,20 @@ function main(): void {
     const at = Math.max(0, views.indexOf(cfg.displayMode));
     const next = (at + (delta > 0 ? 1 : -1) + views.length) % views.length;
     cfg = { ...cfg, displayMode: views[next] };
-    showToast(viewLabel(views[next]), next, views.length);
+    if (latest) {
+      // The new view shows straight away; dots on the bottom row say where it is in the list.
+      viewDots = [next, views.length];
+      if (dotsTimer) clearTimeout(dotsTimer);
+      dotsTimer = setTimeout(() => {
+        dotsTimer = null;
+        viewDots = null;
+        void draw().catch(report);
+      }, DOTS_MS);
+      void draw().catch(report);
+    } else {
+      // With no reading to show the view with, name it instead.
+      showToast(viewLabel(views[next]), next, views.length);
+    }
     saveKnob();
     // IOB/COB are only fetched for the views that show them: get them now rather than at the next poll.
     if ((views[next] === "iob" || views[next] === "iob_cob") && nightscout && !extras) {
@@ -366,11 +387,19 @@ function main(): void {
 
   /** When the knob (or Start) went down, to tell a press from a hold on release. */
   let pressedAt = 0;
+  /** The last step the knob took, to drop contact bounce. */
+  let lastTurn = { at: 0, direction: 0 };
 
   // Knob: turn for views, press for the chart, hold for units. Start does the same as pressing the knob. Back leaves the app.
   const unbind = listen("input", (event) => {
     if (stopped) return;
-    if (event.key === "encoder") return turn(event.action === "counterclockwise" ? -1 : 1);
+    if (event.key === "encoder") {
+      const direction = event.action === "counterclockwise" ? -1 : 1;
+      const now = Date.now();
+      if (direction !== lastTurn.direction && now - lastTurn.at < BOUNCE_MS) return;
+      lastTurn = { at: now, direction };
+      return turn(direction);
+    }
     if (event.key === "ok" || event.key === "start") {
       if (event.action === "press") pressedAt = Date.now();
       if (event.action === "release" && pressedAt) {
