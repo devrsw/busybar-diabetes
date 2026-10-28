@@ -186,6 +186,30 @@ function formatCob(cob: number | null): string {
   return cob === null ? "--g" : `${Math.round(cob)}g`;
 }
 
+/** A brief overlay while using the knob: a label, and dots marking `index` of `count` along the bottom. */
+export function toastFrame(text: string, index = -1, count = 0): Node {
+  const label: Node = { type: "text", id: "toast", text, font: "small", color: "#FFFFFFFF" };
+  if (count < 2) return row({ width: 72, height: 16, justify: "center", align: "center" }, [label]);
+  // Dots 4 px wide, 2 px apart, centered on the bottom row; the current one bright.
+  const width = count * 6 - 2;
+  let line = "";
+  for (let x = 0; x < 72; x++) {
+    const pos = x - Math.floor((72 - width) / 2);
+    const dot = Math.floor(pos / 6);
+    line += pos < 0 || pos >= width || pos % 6 >= 4 ? "." : dot === index ? "#" : "-";
+  }
+  return column({ width: 72, height: 16, gap: 1 }, [
+    row({ width: 72, height: 14, justify: "center", align: "center" }, [label]),
+    {
+      type: "xpmbitmap",
+      id: "toast_dots",
+      data: generateXpm2({ palette: { "#": "#FFFFFF", "-": "#404040", ".": "none" }, grid: [line] }),
+      width: 72,
+      height: 1,
+    },
+  ]);
+}
+
 /** A short status line in place of a reading. */
 export function messageFrame(text: string): Node {
   return row({ width: 72, height: 16, justify: "center", align: "center" }, [

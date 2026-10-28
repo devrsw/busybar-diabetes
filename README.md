@@ -33,7 +33,7 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
    - **Nightscout:** any Nightscout site. If it isn't publicly readable, create an access token: Admin Tools → Subjects → Add new subject with the `readable` role, then copy the token shown next to it (it looks like `bar-1a2b3c4d5e6f7a8b`). The API secret is not supported.
 
    With both, Dexcom supplies glucose and Nightscout takes over whenever Dexcom isn't working: an error, a rejected login, no data, or a reading older than the stale limit. Nightscout also supplies carbs and insulin on board for the COB/IOB display mode.
-2. Install the app: download the `.tgz` from [Releases](https://github.com/devrsw/busybar-diabetes/releases), or build it (below). Safari may unpack the download into a `.tar`; that installs just the same.
+2. Install the app: download the `.tgz` from [Releases](https://github.com/devrsw/busybar-diabetes/releases), or build it (below). Safari may unpack the download into a `.tar`; that installs just the same. Installing over an older version normally keeps your settings, but the bar's firmware has been seen to reset them during an install; if the app shows `Set Dexcom/NS` afterwards, enter them again. If an install fails while Glucose is running, quit it first.
 3. On the BUSY Bar, open **APPS → Glucose** settings and fill them in with the bar's own controls. Every setting can be changed on the bar; the bar's Web UI works too.
 
 | Setting | |
@@ -50,12 +50,18 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 | Ranges | Urgent low / low / high / urgent high in mg/dL (55 / 70 / 180 / 250), and whether the LED blinks when urgent |
 | Colors | One color per range, picked from a list (red, orange, amber, yellow, green, teal, cyan, blue, purple, pink, white) |
 
-Settings are re-read every time the app polls, so changes take effect within a few minutes; press **OK** to apply them right away.
+Settings are re-read every time the app polls, so changes take effect within a few minutes; press the knob to apply them right away.
 
 ## Controls
 
-- **OK**: refresh now
-- **Back**: quit
+| Control | |
+| --- | --- |
+| **Turn the knob** | Next or previous view. Its name shows for a moment, with dots marking where it is in the list. The IOB views are skipped when no Nightscout URL is set. |
+| **Press the knob** | Refresh now, and show where the reading came from and how old it is, e.g. `Dexcom 2m` |
+| **Hold the knob** | Switch between mg/dL and mmol/L |
+| **Back** | Quit |
+
+Apps can read their settings but not change them, so the view and units you pick with the knob are remembered on the bar separately. If you later change Display mode or Units in the settings, that change wins.
 
 ## Screen messages
 
@@ -97,6 +103,7 @@ npx -p node@24 npm run app:run -- --addr <bar-ip>
 | `src/nightscout.ts` | Nightscout client (entries API, optional access token) |
 | `src/display.ts` | Screen layout, range colors, trend arrow bitmaps and directions |
 | `src/motion.ts` | The value's count to a new reading |
+| `src/controls.ts` | Knob order of the views, and remembering knob choices |
 | `src/animations/` | Generated arrow loop animations |
 | `tools/make_arrow_anims.py` | Generates the arrow animations (`.anim`, the bar's native format) |
 | `tools/screenshot.py` | LED-style screenshots and animated captures from a bar |

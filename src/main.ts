@@ -3,7 +3,8 @@ import { render, type Node } from "@busy-app/busy-lib";
 import manifest from "./appmeta/manifest.json";
 import { loadConfig, type Config } from "./config";
 import { DexcomShare } from "./dexcom";
-import { messageFrame, rangeColor, rangeOf, readingFrame, type Extras } from "./display";
+import { applyKnob, availableViews, rememberKnob, viewLabel } from "./controls";
+import { messageFrame, rangeColor, rangeOf, readingFrame, toastFrame, type Extras } from "./display";
 import { FRAME_MS, STILL, tweenAt, tweenFor, type Fx, type Tween } from "./motion";
 import { Nightscout } from "./nightscout";
 import { AuthError, type Reading } from "./reading";
@@ -21,6 +22,10 @@ const RETRY_MS = 30 * 1000;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
 /** Wrong credentials: retry rarely, Dexcom locks accounts after repeated failures. */
 const AUTH_RETRY_MS = 10 * 60 * 1000;
+/** How long the knob's overlays stay up. */
+const TOAST_MS = 1200;
+/** Knob choices are saved once the knob has been still this long: each save rewrites flash. */
+const KNOB_SAVE_MS = 3000;
 /** The progress line gains a pixel every 5 seconds. */
 const TICK_MS = 5 * 1000;
 
@@ -28,6 +33,14 @@ const report = (err: unknown) => console.error(`${APP}: ${err instanceof Error ?
 
 function main(): void {
   let cfg: Config | null = null;
+  /** The settings as stored, before the knob's choices: what those choices are remembered against. */
+  let settings: Config | null = null;
+  /** Where the latest reading came from, for the press-to-show info. */
+  let source = "";
+  // A brief overlay while using the knob.
+  let toast: { text: string; index: number; count: number } | null = null;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let knobSaveTimer: ReturnType<typeof setTimeout> | null = null;
   // Dexcom is the glucose source when set up; Nightscout fills in when it isn't, fails or lags, and always supplies COB/IOB.
   let dexcom: DexcomShare | null = null;
   let dexcomKey = "";
@@ -58,6 +71,7 @@ function main(): void {
   let fx: Fx = STILL;
 
   function frame(): Node {
+    if (toast) return toastFrame(toast.text, toast.index, toast.count);
     if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now(), fx);
     return messageFrame(message);
   }
@@ -158,7 +172,10 @@ function main(): void {
     let dexcomError: unknown = null;
     let nightscoutError: unknown = null;
     try {
-      cfg = await loadConfig(APP);
+      settings = await loadConfig(APP);
+      // Knob choices not saved yet are only in memory: keep them over what was stored.
+      const unsaved = knobSaveTimer && cfg ? { displayMode: cfg.displayMode, units: cfg.units } : null;
+      cfg = { ...applyKnob(settings), ...unsaved };
       const hasDexcom = !!cfg.username && !!cfg.password;
       const hasNightscout = !!cfg.nsUrl;
       if (!hasDexcom && !hasNightscout) {
@@ -242,6 +259,7 @@ function main(): void {
         // A delta across a gap in the data would mislead.
         deltaMgdl = previous && newest.time - previous.time < 11 * 60 * 1000 ? newest.mgdl - previous.mgdl : null;
         // Ask again right after the next reading should land.
+        source = fromNightscout ? "Nightscout" : "Dexcom";
         const maxWait = fromNightscout ? NIGHTSCOUT_POLL_MS : READING_INTERVAL_MS + SHARE_LAG_MS;
         const due = newest.time + READING_INTERVAL_MS + SHARE_LAG_MS - Date.now();
         next = due > 0 ? Math.min(due, maxWait) : RETRY_MS;
@@ -274,19 +292,84 @@ function main(): void {
     if (latest) void draw().catch(report);
   }, TICK_MS);
 
-  // OK refreshes now. Back leaves the app.
-  const unbind = listen("input", (event) => {
-    if (stopped || event.action !== "short") return;
-    if (event.key === "ok") {
-      if (!polling) schedule(0);
-      return;
+  /** Shows an overlay for a moment, then the reading again. */
+  function showToast(text: string, index = -1, count = 0): void {
+    toast = { text, index, count };
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toast = null;
+      void draw().catch(report);
+    }, TOAST_MS);
+    void draw().catch(report);
+  }
+
+  /** Saves the knob's choices once it has been still for a moment, or right away when quitting. */
+  function saveKnob(now = false): void {
+    if (knobSaveTimer) clearTimeout(knobSaveTimer);
+    knobSaveTimer = null;
+    const save = () => {
+      knobSaveTimer = null;
+      if (!cfg || !settings) return;
+      rememberKnob("displayMode", cfg.displayMode, settings.displayMode);
+      rememberKnob("units", cfg.units, settings.units);
+    };
+    if (now) save();
+    else knobSaveTimer = setTimeout(save, KNOB_SAVE_MS);
+  }
+
+  /** Turning the knob steps through the views. */
+  function turn(delta: number): void {
+    if (!cfg) return;
+    const views = availableViews(cfg);
+    const at = Math.max(0, views.indexOf(cfg.displayMode));
+    const next = (at + (delta > 0 ? 1 : -1) + views.length) % views.length;
+    cfg = { ...cfg, displayMode: views[next] };
+    showToast(viewLabel(views[next]), next, views.length);
+    saveKnob();
+    // IOB/COB are only fetched for the views that show them: get them now rather than at the next poll.
+    if ((views[next] === "iob" || views[next] === "iob_cob") && nightscout && !extras) {
+      void nightscout
+        .extras()
+        .then((found) => {
+          extras = found;
+          if (!stopped) void draw().catch(report);
+        })
+        .catch(report);
     }
-    if (event.key !== "back") return;
+  }
+
+  /** Pressing shows where the reading came from and refreshes. */
+  function press(): void {
+    if (latest) {
+      const minutes = Math.max(0, Math.floor((Date.now() - latest.time) / 60000));
+      showToast(`${source} ${minutes}m`);
+    }
+    if (!polling) schedule(0);
+  }
+
+  /** Holding switches units. */
+  function hold(): void {
+    if (!cfg) return;
+    cfg = { ...cfg, units: cfg.units === "mmol" ? "mgdl" : "mmol" };
+    showToast(cfg.units === "mmol" ? "mmol/L" : "mg/dL");
+    saveKnob();
+  }
+
+  // Knob: turn for views, press to refresh, hold for units. Back leaves the app.
+  const unbind = listen("input", (event) => {
+    if (stopped) return;
+    if (event.key === "encoder") return turn(event.delta);
+    if (event.key === "ok" && event.action === "short") return press();
+    if (event.key === "ok" && event.action === "long") return hold();
+    if (event.key !== "back" || event.action !== "short") return;
 
     stopped = true;
     clearInterval(ticker);
     if (animTimer) clearInterval(animTimer);
     if (pollTimer) clearTimeout(pollTimer);
+    if (toastTimer) clearTimeout(toastTimer);
+    if (knobSaveTimer) saveKnob(true);
 
     // Not detached from inside the handler itself: with nothing else left the unbind stops the app on the spot, while this handler is still running.
     setTimeout(unbind, 0);
