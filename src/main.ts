@@ -4,7 +4,7 @@ import manifest from "./appmeta/manifest.json";
 import { loadConfig, type Config } from "./config";
 import { DexcomShare } from "./dexcom";
 import { applyKnob, availableViews, rememberKnob, viewLabel } from "./controls";
-import { messageFrame, rangeColor, rangeOf, readingFrame, toastFrame, type Extras } from "./display";
+import { chartFrame, CHART_MS, messageFrame, rangeColor, rangeOf, readingFrame, toastFrame, type Extras } from "./display";
 import { FRAME_MS, STILL, tweenAt, tweenFor, type Fx, type Tween } from "./motion";
 import { Nightscout } from "./nightscout";
 import { AuthError, type Reading } from "./reading";
@@ -22,6 +22,8 @@ const RETRY_MS = 30 * 1000;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
 /** Wrong credentials: retry rarely, Dexcom locks accounts after repeated failures. */
 const AUTH_RETRY_MS = 10 * 60 * 1000;
+/** A press held at least this long is a hold. Timed here: the firmware's own "long" needs a longer hold than feels natural. */
+const HOLD_MS = 600;
 /** How long the knob's overlays stay up. */
 const TOAST_MS = 1200;
 /** Knob choices are saved once the knob has been still this long: each save rewrites flash. */
@@ -35,8 +37,9 @@ function main(): void {
   let cfg: Config | null = null;
   /** The settings as stored, before the knob's choices: what those choices are remembered against. */
   let settings: Config | null = null;
-  /** Where the latest reading came from, for the press-to-show info. */
-  let source = "";
+  // Pressing the knob opens a chart of the last hour; history is only fetched while it is open.
+  let chartOpen = false;
+  let history: Reading[] = [];
   // A brief overlay while using the knob.
   let toast: { text: string; index: number; count: number } | null = null;
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -72,6 +75,7 @@ function main(): void {
 
   function frame(): Node {
     if (toast) return toastFrame(toast.text, toast.index, toast.count);
+    if (chartOpen && latest && cfg) return chartFrame(history, latest, cfg, Date.now());
     if (latest && cfg) return readingFrame(latest, deltaMgdl, extras, cfg, Date.now(), fx);
     return messageFrame(message);
   }
@@ -204,7 +208,8 @@ function main(): void {
       let fromNightscout = false;
       if (dexcom && now >= dexcomPausedUntil) {
         try {
-          readings = await dexcom.readings(2);
+          // An hour of 5-minute readings while the chart is open, otherwise just enough for the delta.
+          readings = await dexcom.readings(chartOpen ? 13 : 2);
         } catch (err) {
           report(err);
           dexcomError = err;
@@ -221,7 +226,8 @@ function main(): void {
       const dexcomCurrent = !!readings && readings.length > 0 && now - readings[0].time < cfg.staleMinutes * 60 * 1000;
       if (nightscout && !dexcomCurrent) {
         try {
-          const fallback = await nightscout.readings(2);
+          // Nightscout may carry 1-minute data: up to an hour of it.
+          const fallback = await nightscout.readings(chartOpen ? 60 : 2);
           if (fallback.length > 0 && (!readings || readings.length === 0 || fallback[0].time > readings[0].time)) {
             readings = fallback;
             fromNightscout = true;
@@ -249,6 +255,7 @@ function main(): void {
         message = "No data";
       } else {
         const [newest, previous] = readings;
+        if (chartOpen) history = readings.filter((r) => newest.time - r.time <= CHART_MS);
         // A new reading counts up or down from what is on screen.
         if (latest && newest.time !== latest.time && cfg.displayMode !== "arrow") {
           tween = tweenFor(fx.mgdl ?? latest.mgdl, newest.mgdl, Date.now());
@@ -259,7 +266,6 @@ function main(): void {
         // A delta across a gap in the data would mislead.
         deltaMgdl = previous && newest.time - previous.time < 11 * 60 * 1000 ? newest.mgdl - previous.mgdl : null;
         // Ask again right after the next reading should land.
-        source = fromNightscout ? "Nightscout" : "Dexcom";
         const maxWait = fromNightscout ? NIGHTSCOUT_POLL_MS : READING_INTERVAL_MS + SHARE_LAG_MS;
         const due = newest.time + READING_INTERVAL_MS + SHARE_LAG_MS - Date.now();
         next = due > 0 ? Math.min(due, maxWait) : RETRY_MS;
@@ -318,9 +324,10 @@ function main(): void {
     else knobSaveTimer = setTimeout(save, KNOB_SAVE_MS);
   }
 
-  /** Turning the knob steps through the views. */
+  /** Turning the knob steps through the views (and leaves the chart). */
   function turn(delta: number): void {
     if (!cfg) return;
+    chartOpen = false;
     const views = availableViews(cfg);
     const at = Math.max(0, views.indexOf(cfg.displayMode));
     const next = (at + (delta > 0 ? 1 : -1) + views.length) % views.length;
@@ -339,13 +346,14 @@ function main(): void {
     }
   }
 
-  /** Pressing shows where the reading came from and refreshes. */
+  /** Pressing opens or closes the chart of the last hour. Opening it fetches the hour right away. */
   function press(): void {
-    if (latest) {
-      const minutes = Math.max(0, Math.floor((Date.now() - latest.time) / 60000));
-      showToast(`${source} ${minutes}m`);
+    chartOpen = !chartOpen;
+    if (chartOpen) {
+      history = latest ? [latest] : [];
+      if (!polling) schedule(0);
     }
-    if (!polling) schedule(0);
+    void draw().catch(report);
   }
 
   /** Holding switches units. */
@@ -356,12 +364,24 @@ function main(): void {
     saveKnob();
   }
 
-  // Knob: turn for views, press to refresh, hold for units. Back leaves the app.
+  /** When the knob (or Start) went down, to tell a press from a hold on release. */
+  let pressedAt = 0;
+
+  // Knob: turn for views, press for the chart, hold for units. Start does the same as pressing the knob. Back leaves the app.
   const unbind = listen("input", (event) => {
     if (stopped) return;
-    if (event.key === "encoder") return turn(event.delta);
-    if (event.key === "ok" && event.action === "short") return press();
-    if (event.key === "ok" && event.action === "long") return hold();
+    if (event.key === "encoder") return turn(event.action === "counterclockwise" ? -1 : 1);
+    if (event.key === "ok" || event.key === "start") {
+      if (event.action === "press") pressedAt = Date.now();
+      if (event.action === "release" && pressedAt) {
+        const held = Date.now() - pressedAt;
+        pressedAt = 0;
+        return held >= HOLD_MS ? hold() : press();
+      }
+      // A "short" with no "press" before it (e.g. sent through the HTTP API) is a press.
+      if (event.action === "short" && !pressedAt) return press();
+      return;
+    }
     if (event.key !== "back" || event.action !== "short") return;
 
     stopped = true;

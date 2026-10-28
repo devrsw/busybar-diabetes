@@ -11,6 +11,7 @@ A continuous glucose display for the BUSY Bar, for people with type 1 diabetes a
 | Arrow only | ![A large down arrow](docs/screenshots/view-arrow.png) |
 | Number + IOB | ![8.4 down 0.6U](docs/screenshots/view-iob.png) |
 | Number + COB/IOB | ![8.4 down, 0g over 0.6U](docs/screenshots/view-iob_cob.png) |
+| Chart (press the knob) | ![The last hour as colored dots around the high line, with 10.7](docs/screenshots/view-chart.png) |
 
 Captured from a bar with `tools/screenshot.py`. The dotted line along the bottom fills toward the next reading.
 
@@ -50,15 +51,16 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 | Ranges | Urgent low / low / high / urgent high in mg/dL (55 / 70 / 180 / 250), and whether the LED blinks when urgent |
 | Colors | One color per range, picked from a list (red, orange, amber, yellow, green, teal, cyan, blue, purple, pink, white) |
 
-Settings are re-read every time the app polls, so changes take effect within a few minutes; press the knob to apply them right away.
+Settings are re-read every time the app polls, so changes take effect within a few minutes; opening the chart with the knob also re-reads them right away.
 
 ## Controls
 
 | Control | |
 | --- | --- |
 | **Turn the knob** | Next or previous view. Its name shows for a moment, with dots marking where it is in the list. The IOB views are skipped when no Nightscout URL is set. |
-| **Press the knob** | Refresh now, and show where the reading came from and how old it is, e.g. `Dexcom 2m` |
-| **Hold the knob** | Switch between mg/dL and mmol/L |
+| **Press the knob** | Open or close a chart of the last hour: a dot per reading in its range color, dotted lines at your low and high thresholds, and the current value. The scale fits the readings, so small swings show. While it is open the app fetches the hour's readings. |
+| **Hold the knob** (0.6 s) | Switch between mg/dL and mmol/L |
+| **Start** | Same as pressing (or holding) the knob |
 | **Back** | Quit |
 
 Apps can read their settings but not change them, so the view and units you pick with the knob are remembered on the bar separately. If you later change Display mode or Units in the settings, that change wins.

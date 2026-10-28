@@ -186,6 +186,59 @@ function formatCob(cob: number | null): string {
   return cob === null ? "--g" : `${Math.round(cob)}g`;
 }
 
+/** How far back the chart reaches. */
+export const CHART_MS = 60 * 60 * 1000;
+
+/**
+ * The last hour as dots colored by range, with dim lines at the low and high thresholds, and the current value on the right.
+ * The vertical scale fits the readings and the thresholds, so small swings still show.
+ */
+export function chartFrame(history: Reading[], latest: Reading, cfg: Config, now: number): Node {
+  const stale = now - latest.time >= cfg.staleMinutes * 60 * 1000;
+  const value = formatValue(latest.mgdl, cfg);
+  const color = stale ? STALE : rangeColor(rangeOf(latest.mgdl, cfg), cfg);
+  const font: DeviceFont = textWidth(value, "extra_large") <= 24 ? "extra_large" : "large";
+  const width = 72 - textWidth(value, font) - GAP;
+
+  const points = history.filter((r) => now - r.time <= CHART_MS);
+  let lo = Math.min(cfg.low, ...points.map((r) => r.mgdl));
+  let hi = Math.max(cfg.high, ...points.map((r) => r.mgdl));
+  lo -= 10;
+  hi += 10;
+  const height = 16;
+  // Rows 0..14 for the dots (2 px tall); y grows downward.
+  const rowOf = (mgdl: number) => Math.round(((hi - mgdl) / (hi - lo)) * (height - 2));
+
+  const grid: string[][] = [];
+  for (let y = 0; y < height; y++) grid.push(new Array(width).fill("."));
+  for (const threshold of [cfg.low, cfg.high]) {
+    const y = rowOf(threshold) + 1;
+    for (let x = 0; x < width; x += 2) grid[y][x] = "g";
+  }
+  const symbol: Record<Range, string> = { urgent_low: "a", low: "b", in_range: "c", high: "d", urgent_high: "e" };
+  for (const r of points) {
+    const x = Math.min(width - 2, Math.round(((CHART_MS - (now - r.time)) / CHART_MS) * (width - 2)));
+    const y = rowOf(r.mgdl);
+    const c = symbol[rangeOf(r.mgdl, cfg)];
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) grid[y + dy][x + dx] = c;
+  }
+
+  const hex = (range: Range) => rangeColor(range, cfg).slice(0, 7);
+  return row({ width: 72, height: 16, justify: "start", align: "center", gap: GAP }, [
+    {
+      type: "xpmbitmap",
+      id: "chart",
+      data: generateXpm2({
+        palette: { ".": "none", g: "#2A2A2A", a: hex("urgent_low"), b: hex("low"), c: hex("in_range"), d: hex("high"), e: hex("urgent_high") },
+        grid: grid.map((line) => line.join("")),
+      }),
+      width,
+      height,
+    },
+    { type: "text", id: "value", text: value, font, color },
+  ]);
+}
+
 /** A brief overlay while using the knob: a label, and dots marking `index` of `count` along the bottom. */
 export function toastFrame(text: string, index = -1, count = 0): Node {
   const label: Node = { type: "text", id: "toast", text, font: "small", color: "#FFFFFFFF" };
