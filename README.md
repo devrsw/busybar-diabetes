@@ -51,7 +51,7 @@ Not a medical device. Don't use it for treatment decisions; that's what your Dex
 | Ranges | Urgent low / low / high / urgent high in mg/dL (55 / 70 / 180 / 250), and whether the LED blinks when urgent |
 | Colors | One color per range, picked from a list (red, orange, amber, yellow, green, teal, cyan, blue, purple, pink, white) |
 
-Settings are re-read every time the app polls, so changes take effect within a few minutes; opening the chart with the knob also re-reads them right away.
+Settings are re-read every 30 seconds, so changes take effect within half a minute.
 
 ## Controls
 
@@ -63,7 +63,7 @@ Settings are re-read every time the app polls, so changes take effect within a f
 | **Start** | Same as pressing (or holding) the knob |
 | **Back** | Quit |
 
-Apps can read their settings but not change them, so the view and units you pick with the knob are remembered on the bar separately. If you later change Display mode or Units in the settings, that change wins.
+Apps can read their settings but not change them, so the view and units you pick with the knob are remembered on the bar separately. If you later change Display mode or Units in the settings, that change wins, and the knob's earlier choice is forgotten.
 
 ## Screen messages
 

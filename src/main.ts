@@ -32,6 +32,8 @@ const DOTS_MS = 1500;
 const BOUNCE_MS = 150;
 /** Knob choices are saved once the knob has been still this long: each save rewrites flash. */
 const KNOB_SAVE_MS = 3000;
+/** Settings changed on the bar show within this long, without waiting for the next glucose poll. */
+const SETTINGS_CHECK_MS = 30 * 1000;
 /** The progress line gains a pixel every 5 seconds. */
 const TICK_MS = 5 * 1000;
 
@@ -184,9 +186,7 @@ function main(): void {
     let nightscoutError: unknown = null;
     try {
       settings = await loadConfig(APP);
-      // Knob choices not saved yet are only in memory: keep them over what was stored.
-      const unsaved = knobSaveTimer && cfg ? { displayMode: cfg.displayMode, units: cfg.units } : null;
-      cfg = { ...applyKnob(settings), ...unsaved };
+      cfg = withKnob(settings);
       const hasDexcom = !!cfg.username && !!cfg.password;
       const hasNightscout = !!cfg.nsUrl;
       if (!hasDexcom && !hasNightscout) {
@@ -305,6 +305,31 @@ function main(): void {
     if (latest) void draw().catch(report);
   }, TICK_MS);
 
+  /** The settings with the knob's choices on top. Choices not saved yet are only in memory: they win over what was stored. */
+  function withKnob(stored: Config): Config {
+    const unsaved = knobSaveTimer && cfg ? { displayMode: cfg.displayMode, units: cfg.units } : null;
+    return { ...applyKnob(stored), ...unsaved };
+  }
+
+  // Settings changed on the bar apply within SETTINGS_CHECK_MS. A changed login or URL needs a poll; the rest just a redraw.
+  const settingsCheck = setInterval(() => {
+    if (polling || !settings) return;
+    void loadConfig(APP)
+      .then((stored) => {
+        if (stopped || polling) return;
+        const login = (c: Config) => [c.username, c.password, c.region, c.nsUrl, c.nsToken].join("\n");
+        const changed = JSON.stringify(stored) !== JSON.stringify(settings);
+        const loginChanged = login(stored) !== login(settings!);
+        const before = cfg?.displayMode;
+        settings = stored;
+        cfg = withKnob(stored);
+        if (loginChanged) return schedule(0);
+        if (cfg.displayMode !== before) fetchExtrasFor(cfg.displayMode);
+        if (changed) void draw().catch(report);
+      })
+      .catch(report);
+  }, SETTINGS_CHECK_MS);
+
   /** Shows an overlay for a moment, then the reading again. */
   function showToast(text: string, index = -1, count = 0): void {
     toast = { text, index, count };
@@ -355,16 +380,19 @@ function main(): void {
       showToast(viewLabel(views[next]), next, views.length);
     }
     saveKnob();
-    // IOB/COB are only fetched for the views that show them: get them now rather than at the next poll.
-    if ((views[next] === "iob" || views[next] === "iob_cob") && nightscout && !extras) {
-      void nightscout
-        .extras()
-        .then((found) => {
-          extras = found;
-          if (!stopped) void draw().catch(report);
-        })
-        .catch(report);
-    }
+    fetchExtrasFor(views[next]);
+  }
+
+  /** IOB/COB are only fetched for the views that show them: on switching to one, get them now rather than at the next poll. */
+  function fetchExtrasFor(view: Config["displayMode"]): void {
+    if ((view !== "iob" && view !== "iob_cob") || !nightscout || extras) return;
+    void nightscout
+      .extras()
+      .then((found) => {
+        extras = found;
+        if (!stopped) void draw().catch(report);
+      })
+      .catch(report);
   }
 
   /** Pressing opens or closes the chart of the last hour. Opening it fetches the hour right away. */
@@ -415,6 +443,7 @@ function main(): void {
 
     stopped = true;
     clearInterval(ticker);
+    clearInterval(settingsCheck);
     if (animTimer) clearInterval(animTimer);
     if (pollTimer) clearTimeout(pollTimer);
     if (toastTimer) clearTimeout(toastTimer);
